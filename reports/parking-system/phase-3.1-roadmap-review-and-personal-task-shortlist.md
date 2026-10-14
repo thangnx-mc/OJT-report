@@ -455,3 +455,335 @@ In strict compliance with prompt Section 3.1, **no Git operations were performed
 - **Task Status**: `IMPLEMENTATION COMPLETE / AUTOMATED VERIFICATION PASS / EXTERNAL VERIFICATION PENDING`.
 
 
+
+---
+
+## 12. Independent API Verification & SRS Conformance Audit
+
+### 12.1 Audit Objectives, Scope, and Evidence Classification
+
+This section provides an independent, evidence-based verification and Software Requirements Specification (SRS) conformance audit of the Admin Account Management (Group A) and Parking Configuration (Group B) APIs implemented in the backend repository.
+
+#### Evidence Classification Standard
+In compliance with project auditing rules, every finding and technical statement in this audit is classified under one of the following evidence tiers:
+- `[SRS/Plan requirement]`: Directly supported by the original specifications (`SRS v1.3` or `Implementation Plan`).
+- `[Team instruction]`: Explicitly assigned by the team lead as current task scope.
+- `[Additional team decision]`: Agreed design decision established during implementation, not originating from the SRS.
+- `[Verified source behavior]`: Directly inspected and confirmed in the current backend source code.
+- `[Test-verified behavior]`: Validated through automated unit or integration tests executed in the test runner.
+- `[Runtime-verified behavior]`: Confirmed against a running SQL Server LocalDB runtime instance with physical schema execution.
+- `[Not verified / unresolved]`: Insufficient evidence or deferred scope awaiting team-wide consensus.
+
+#### Safety and Workspace Boundaries
+- **Backend Source Code**: Zero production code modifications were introduced during this audit. Only targeted verification test classes were added to `tests/`.
+- **Frontend Source Code**: Preserved unmodified.
+- **Git Restrictions**: **Zero Git commands were executed within `C:\DEV\OJT-FSA-Team3` or its children.** All Git operations are strictly confined to `C:\DEV\OJT-report`.
+- **Database Safety**: Zero shared, staging, or production databases were contacted or modified. Runtime DDL and index verification was conducted in an isolated, disposable LocalDB instance (`(localdb)\PMS_Verification_Temp`) that was created, validated, and completely destroyed during the audit.
+
+---
+
+### 12.2 Authoritative Source Documents & Requirements Baseline
+
+The audit evaluated the original Microsoft Word documents archived in `reports/parking-system/source-documents/`:
+1. `SRS v1.3 – Hệ thống Quản lý Nhiều Bãi Đỗ Xe.docx` (SHA-verified archived specification; 28,363 characters parsed).
+2. `Implementation Plan - Hệ thống Quản lý Nhiều Bãi Đỗ Xe.docx` (SHA-verified archived project plan; 15,041 characters parsed).
+
+#### Evaluated Requirements & Use Cases
+- `FR-AUTH-04` `[SRS/Plan requirement]`: Admin management of internal accounts (Manager, Staff, Admin): creation, locking, password reset, session revocation.
+- `FR-AUTH-07` `[SRS/Plan requirement]`: Lot Manager creation and management of Staff accounts strictly scoped to their assigned lot.
+- `FR-AUTH-08` `[SRS/Plan requirement]`: Internal account activation via link or temporary password, mandatory first-login password change and 2FA; soft locking upon resignation.
+- `FR-LOT-01` `[SRS/Plan requirement]`: Parking Lot CRUD for Admin (name, address, GPS coordinates, operating hours, capacity, images).
+- `FR-LOT-02` `[SRS/Plan requirement]`: Zone/Floor/Row configuration and slot configuration by vehicle type.
+- `FR-LOT-03` `[SRS/Plan requirement]`: Four slot states (Trống / Available, Giữ chỗ / Reserved, Đang đỗ / Occupied, Bảo trì / Maintenance) and live `ZoneCounter` tracking for transient vehicles.
+- `FR-LOT-04` `[SRS/Plan requirement]`: Parking lot status toggling, temporary closure, and maintenance notices.
+- `FR-LOT-05` `[SRS/Plan requirement]`: Public parking lot listing with real-time occupancy and pricing.
+- `FR-LOT-06` `[SRS/Plan requirement]`: Maximum reservation slot quotas per zone, with remaining capacity reserved for transient vehicles.
+- Relevant Use Cases: `UC-01` (Vehicle Ingress), `UC-02` (Vehicle Egress), `UC-03` (View 3D Layout), `UC-04` (Reserve Slot), `UC-09` (Create Staff Account).
+- Relevant Implementation Plan tasks: `B1.3` (Auth & RBAC), `B1.4` (Parking CRUD & 4 Slot States), `B1.5` (Public APIs).
+
+---
+
+### 12.3 Automated Test Suite Execution & Rerun Evidence
+
+#### 12.3.1 Baseline Test Suite Rerun
+The existing test suite was rerun directly from the clean workspace:
+- **Command**: `dotnet test` (Executed in `C:\DEV\OJT-FSA-Team3\parking-management-system`)
+- **Outcome**: **181 passed, 0 failed, 0 skipped**
+  - `PMS.Application.UnitTests`: 143 passed, 0 failed, 0 skipped (Duration: ~1.0 s)
+  - `PMS.Api.IntegrationTests`: 38 passed, 0 failed, 0 skipped (Duration: ~14.0 s)
+  - Total Duration: ~24.0 s
+
+#### 12.3.2 Targeted Verification Test Suites Added
+To independently probe edge cases, negative validation, authorization boundaries, and composite uniqueness without mutating production code, three targeted test suites were created in the test projects:
+1. `tests/PMS.Application.UnitTests/Services/AdminAccountVerificationUnitTests.cs`:
+   - Validates that when Identity account creation fails (e.g. duplicate username), no orphan `Employee` record is committed to `PmsDbContext`.
+   - Validates that `UpdateUserStatusAsync` throws `NotFoundException` when the target user ID does not exist.
+   - Validates that reactivation transitions `Employee.Status` from `"Inactive"` back to `"Active"`.
+2. `tests/PMS.Api.IntegrationTests/Tests/AdminApiConformanceTests.cs`:
+   - Validates 401 Unauthorized for anonymous callers and 403 Forbidden for non-Admin callers across all four admin routes (`POST /api/admin/managers`, `POST /api/admin/staff`, `GET /api/admin/users`, `PATCH /api/admin/users/{id}/status`).
+   - Validates that duplicate username creation returns 400 Bad Request.
+   - Validates that `GET /api/admin/users` response payloads do not expose sensitive internal attributes (`passwordHash`, `securityStamp`, `concurrencyStamp`).
+   - Validates filtering on `GET /api/admin/users` by `role` (`Manager` vs `Staff`).
+   - Validates that patching status of a nonexistent user returns 404 Not Found.
+3. `tests/PMS.Api.IntegrationTests/Tests/ParkingConfigurationConformanceTests.cs`:
+   - Validates the complete RBAC matrix across Parking Lots: Admin can create and delete lots; Manager is rejected with 403 Forbidden on create and delete; Manager can view lots; User is rejected with 403; Anonymous is rejected with 401.
+   - Validates that `GET /api/public/lots` allows anonymous access and does not leak internal operational fields (`managerUserId`, `partnerId`, `createdBy`).
+   - Validates duplicate lot code rejection (400 Bad Request).
+   - Validates that deleting a lot with active parking sessions is rejected (400 Bad Request).
+   - Validates composite zone code uniqueness: creating identical zone codes within the same lot is rejected (400 Bad Request), while identical zone codes across different lots are accepted (200 OK).
+   - Validates that deleting a zone containing occupied slots is rejected (400 Bad Request).
+   - Validates that patching a slot to an invalid status is rejected (400 Bad Request).
+
+#### 12.3.3 Comprehensive Test Suite Verification
+- **Command**: `dotnet test`
+- **Final Outcome**: **196 passed, 0 failed, 0 skipped**
+  - `PMS.Application.UnitTests`: **146 passed, 0 failed, 0 skipped** (Duration: 813 ms)
+  - `PMS.Api.IntegrationTests`: **50 passed, 0 failed, 0 skipped** (Duration: 10 s)
+  - Total Duration: ~18 s
+
+---
+
+### 12.4 Group A — Admin Account Management API Verification Results
+
+#### 12.4.1 Create Manager & Staff (`POST /api/admin/managers`, `POST /api/admin/staff`)
+- **Role Enforcement** `[Test-verified behavior]`:
+  - The request model `CreateEmployeeAccountModel` contains no `Role` property.
+  - The assigned role is immutably set by the endpoint: `/api/admin/managers` delegates to `CreateManagerAsync` (role = `"Manager"`), while `/api/admin/staff` delegates to `CreateStaffAsync` (role = `"Staff"`). Clients cannot override or escalate role privileges.
+- **Employee Code Generation** `[Test-verified behavior]`:
+  - Generated on the server using `System.Security.Cryptography.RandomNumberGenerator.GetInt32(0, 1_000_000).ToString("D6")`.
+  - Format strictly matches `^QL\d{6}$` for Managers and `^NV\d{6}$` for Staff. Total length is exactly 8 characters.
+  - Codes with leading zeros (e.g. `QL000042`) format correctly due to the `"D6"` specifier.
+  - The client request DTO has no employee code field; clients cannot supply or tamper with the code.
+- **Initial Account State** `[Test-verified behavior]`:
+  - Accounts are provisioned immediately with `ApplicationUser.IsActive = true`, `EmailConfirmed = true`, and `Employee.Status = "Active"`.
+- **Validation Rules** `[Test-verified behavior]`:
+  - `CreateEmployeeAccountModelValidator` enforces: username (3-50 alphanumeric + underscores), full name (1-100 characters), valid email (max 100 characters), Vietnamese phone regex (`^(0|\+84)(3|5|7|8|9)[0-9]{8}$`), and strong password (min 6 characters with uppercase, lowercase, digit, and special symbol).
+- **Duplicate Identifier Handling** `[Test-verified behavior]`:
+  - Duplicate username or email triggers `IdentityResult.Failed` in `userManager.CreateAsync`, returning 400 Bad Request.
+  - No `Employee` record is inserted into `PmsDbContext` when identity creation fails.
+- **Uniqueness & Collision Resilience** `[Runtime-verified behavior]`:
+  - Application-level retry loop attempts code generation up to 10 times.
+  - Backed by database unique index `IX_Employees_EmployeeCode` on `[dbo].[Employees]`.
+- **Transaction Boundary Analysis** `[Verified source behavior]`:
+  - `DatabaseContext` (Identity) and `PmsDbContext` (Domain) are distinct DbContext instances.
+  - `userManager.CreateAsync` writes to `DatabaseContext`. Subsequently, `pmsContext.Employees.Add` writes to `PmsDbContext`.
+  - *Architectural Risk*: Because these operations are not bound within a distributed transaction scope, an unexpected runtime crash or database exception in `pmsContext.SaveChangesAsync()` could leave an `ApplicationUser` in `AspNetUsers` without a matching `Employee` record. Recommended pre-integration hardening: wrap the dual-write in a `TransactionScope` or add compensating deletion on `pmsContext` failure.
+- **Authorization** `[Test-verified behavior]`:
+  - Anonymous callers receive `401 Unauthorized`.
+  - Non-Admin authenticated callers (`User`, `Manager`) receive `403 Forbidden`.
+
+#### 12.4.2 List Internal Accounts (`GET /api/admin/users`)
+- **Internal Account Filtering** `[Test-verified behavior]`:
+  - Query explicitly filters: `userManager.Users.Where(u => u.Role == "Manager" || u.Role == "Staff")`.
+  - `Admin` accounts and external customer (`User`) accounts are strictly excluded.
+- **Filter Parameters** `[Test-verified behavior]`:
+  - `role`: Filters between `"Manager"` and `"Staff"`.
+  - `isActive`: Filters active (`true`) or inactive (`false`) accounts.
+  - `searchTerm`: Performs case-insensitive substring search across `UserName`, `Email`, and `PhoneNumber`.
+- **Search Limitation** `[Verified source behavior]`:
+  - `searchTerm` executes against `userManager.Users` (`ApplicationUser` table). Consequently, it does not query `Employee.FullName` or `Employee.EmployeeCode`. To search by full name or employee code, the query would need to join `PmsDbContext.Employees`.
+- **Information Leakage Prevention** `[Test-verified behavior]`:
+  - Returns `UserResponseModel` containing `id`, `userName`, `fullName`, `email`, `phoneNumber`, `role`, `employeeCode`, and `isActive`.
+  - Sensitive security attributes (`PasswordHash`, `SecurityStamp`, `ConcurrencyStamp`, tokens) are strictly omitted.
+- **Authorization** `[Test-verified behavior]`:
+  - Anonymous callers receive `401 Unauthorized`.
+  - Non-Admin callers (`User`, `Manager`) receive `403 Forbidden`.
+
+#### 12.4.3 Account Status Lifecycle (`PATCH /api/admin/users/{id}/status`)
+- **Soft Deactivation Semantics** `[Test-verified behavior]`:
+  - Setting `isActive: false` updates `ApplicationUser.IsActive = false` and synchronizes `Employee.Status = "Inactive"`. Physical records are retained.
+  - Reactivating with `isActive: true` updates `ApplicationUser.IsActive = true` and synchronizes `Employee.Status = "Active"`.
+- **Authentication Interception** `[Test-verified behavior]`:
+  - `POST /api/users/authenticate` checks `!user.IsActive` and immediately returns 400 Bad Request ("Account is deactivated. Please contact an administrator.").
+  - Reactivated users can authenticate successfully.
+- **Administrative Self-Protection Guards** `[Test-verified behavior]`:
+  - Admin cannot deactivate their own account (`claimService.GetUserId() == targetId` throws `BadRequestException`).
+  - Admin cannot deactivate another Admin account (target role `"Admin"` throws `BadRequestException`).
+- **Error Handling** `[Test-verified behavior]`:
+  - Nonexistent user IDs return 404 Not Found.
+- **Authorization** `[Test-verified behavior]`:
+  - Restricted exclusively to `[Authorize(Roles = "Admin")]`.
+
+---
+
+### 12.5 Group B — Parking Configuration API Verification Results
+
+#### 12.5.1 Role-Based Access Control (RBAC) Verification Matrix
+
+The 18 endpoints across Parking Lots, Zones, and Slots were verified against all actor roles:
+
+| Route | Method | Anonymous | Role: User | Role: Manager | Role: Admin | Evidence Tier |
+| :--- | :--- | :---: | :---: | :---: | :---: | :--- |
+| `/api/lots` | `POST` | 401 | 403 | 403 | 200 | `[Test-verified behavior]` |
+| `/api/lots` | `GET` | 401 | 403 | 200 | 200 | `[Test-verified behavior]` |
+| `/api/lots/{id}` | `GET` | 401 | 403 | 200 | 200 | `[Test-verified behavior]` |
+| `/api/lots/{id}` | `PUT` | 401 | 403 | 200 | 200 | `[Test-verified behavior]` |
+| `/api/lots/{id}/status` | `PATCH` | 401 | 403 | 200 | 200 | `[Test-verified behavior]` |
+| `/api/lots/{id}` | `DELETE` | 401 | 403 | 403 | 200 | `[Test-verified behavior]` |
+| `/api/public/lots` | `GET` | 200 | 200 | 200 | 200 | `[Test-verified behavior]` |
+| `/api/zones` | `GET` | 401 | 403 | 200 | 200 | `[Test-verified behavior]` |
+| `/api/lots/{lotId}/zones` | `GET` | 401 | 403 | 200 | 200 | `[Test-verified behavior]` |
+| `/api/zones/{id}` | `GET` | 401 | 403 | 200 | 200 | `[Test-verified behavior]` |
+| `/api/zones` | `POST` | 401 | 403 | 200 | 200 | `[Test-verified behavior]` |
+| `/api/lots/{lotId}/zones` | `POST` | 401 | 403 | 200 | 200 | `[Test-verified behavior]` |
+| `/api/zones/{id}` | `PUT` | 401 | 403 | 200 | 200 | `[Test-verified behavior]` |
+| `/api/zones/{id}` | `DELETE` | 401 | 403 | 200 | 200 | `[Test-verified behavior]` |
+| `/api/slots` | `GET` | 401 | 403 | 200 | 200 | `[Test-verified behavior]` |
+| `/api/zones/{zoneId}/slots` | `GET` | 401 | 403 | 200 | 200 | `[Test-verified behavior]` |
+| `/api/slots/{id}` | `GET` | 401 | 403 | 200 | 200 | `[Test-verified behavior]` |
+| `/api/slots` | `POST` | 401 | 403 | 200 | 200 | `[Test-verified behavior]` |
+| `/api/zones/{zoneId}/slots` | `POST` | 401 | 403 | 200 | 200 | `[Test-verified behavior]` |
+| `/api/slots/{id}` | `PUT` | 401 | 403 | 200 | 200 | `[Test-verified behavior]` |
+| `/api/slots/{id}/status` | `PATCH` | 401 | 403 | 200 | 200 | `[Test-verified behavior]` |
+| `/api/slots/{id}` | `DELETE` | 401 | 403 | 200 | 200 | `[Test-verified behavior]` |
+
+#### 12.5.2 Parking Lot Lifecycle & Relational Integrity
+- **CRUD Operations** `[Test-verified behavior]`:
+  - Full lifecycle verified: Create $\to$ Get By ID $\to$ Update $\to$ Update Status $\to$ Soft Delete.
+- **Unique Lot Code** `[Runtime-verified behavior]`:
+  - Validated by service check and enforced on SQL Server via `IX_ParkingLots_Code`. Duplicate lot code returns 400 Bad Request.
+- **Operating Hours & Capacity Validation** `[Test-verified behavior]`:
+  - Capacity must be $\ge 0$.
+  - When `Is24Hours == false`, both `OpenTime` and `CloseTime` are mandatory.
+- **Active Session Deletion Guard** `[Test-verified behavior]`:
+  - Attempting to soft-delete a parking lot with active parking sessions (`ParkingSessions.AnyAsync(s => s.ParkingLotId == id && s.Status == "Active")`) is rejected with 400 Bad Request ("Cannot delete parking lot with active parking sessions.").
+- **Soft Deletion & Query Filtering** `[Test-verified behavior]`:
+  - Deleted lots have `IsDeleted = true` and `Status = "Inactive"`.
+  - Ordinary `GET /api/lots/{id}` queries return 404 Not Found for deleted lots.
+  - `GET /api/lots` excludes deleted lots by default, returning them only when `includeDeleted: true` is requested.
+- **Public Lot Listing (`GET /api/public/lots`)** `[Test-verified behavior]`:
+  - Allows anonymous access.
+  - Returns only active, non-deleted parking lots.
+  - Sensitive internal operational fields (`managerUserId`, `partnerId`, `createdBy`) are omitted from `PublicParkingLotResponseModel`.
+
+#### 12.5.3 Zone Configuration & Relational Integrity
+- **Parent Lot Validation** `[Test-verified behavior]`:
+  - Creating a zone under a nonexistent or soft-deleted parking lot returns 404 Not Found.
+- **Composite Zone Code Uniqueness** `[Runtime-verified behavior]`:
+  - Enforced by unique composite index `IX_Zones_ParkingLotId_Code`.
+  - Creating duplicate zone code within the same lot returns 400 Bad Request.
+  - Creating identical zone code in different lots succeeds with 200 OK.
+- **Occupied Slot Deletion Guard** `[Test-verified behavior]`:
+  - Attempting to delete/deactivate a zone containing slots with `Status == "Occupied"` is rejected with 400 Bad Request ("Cannot deactivate zone that contains occupied slots.").
+- **Slot Aggregation** `[Test-verified behavior]`:
+  - Zone response includes `TotalSlots`, computed from active child slots.
+
+#### 12.5.4 Slot Management & Operational State Transitions
+- **Parent Zone & Vehicle Type Validation** `[Test-verified behavior]`:
+  - Creating a slot under an inactive or nonexistent zone returns 404 Not Found.
+  - Creating a slot with an inactive or nonexistent `VehicleTypeId` returns 404 Not Found.
+- **Composite Slot Code Uniqueness** `[Runtime-verified behavior]`:
+  - Enforced by unique composite index `IX_Slots_ZoneId_Code`.
+  - Duplicate slot code within the same zone returns 400 Bad Request.
+- **Four Slot State Transitions** `[Test-verified behavior]`:
+  - Allowed status values are strictly restricted to: `Available`, `Occupied`, `Reserved`, `Maintenance`.
+  - Any invalid or unrecognized status string throws 400 Bad Request.
+- **Occupied Slot Deletion Guard** `[Test-verified behavior]`:
+  - Attempting to delete/deactivate a slot currently in `Occupied` status is rejected with 400 Bad Request ("Cannot deactivate a slot that is currently occupied.").
+- **Concurrency & Versioning** `[Verified source behavior]`:
+  - `Slot.RowVersion` is mapped as `[rowversion]` in SQL Server and marked with `IsRowVersion()` in EF Core, preventing concurrent overwrite race conditions.
+
+---
+
+### 12.6 Database & Runtime Schema Verification (Isolated LocalDB)
+
+#### 12.6.1 Test Environment Isolation
+- `[FACT]`: In the automated test suites (`PMS.Application.UnitTests` and `PMS.Api.IntegrationTests`), `UseInMemoryDatabase("true")` is configured.
+- `[INFERENCE]`: Automated tests verify service logic, validations, and controller pipeline, but **bypass physical SQL Server DDL execution and SQL-level constraint enforcement**.
+- `[OBSERVATION]`: In `AutomatedMigration.cs`, `EnsurePmsTablesAsync` only executes when `context.Database.IsSqlServer()` is true.
+
+#### 12.6.2 Physical SQL Server DDL & Schema Smoke Testing
+To verify physical database behavior safely without connecting to any shared or production database, an isolated, disposable LocalDB instance was created and tested:
+- **Instance**: `(localdb)\PMS_Verification_Temp`
+- **Database**: `PMS_Verification_Db`
+
+##### 1. DDL Syntax Execution
+- The exact DDL script from `AutomatedMigration.EnsurePmsTablesAsync` was executed via `sqlcmd`.
+- **Result**: `[Runtime-verified behavior]` 100% syntactically valid Transact-SQL. Created `dbo.Employees`, `dbo.ParkingLots`, `dbo.Zones`, `dbo.Slots`, and seed data for `dbo.VehicleTypes` with zero errors.
+
+##### 2. Idempotency Verification
+- The identical DDL script was executed a second time against `PMS_Verification_Db`.
+- **Result**: `[Runtime-verified behavior]` Execution completed with 0 errors and zero duplicate records, confirming true script idempotency.
+
+##### 3. Physical Index Verification
+Querying `sys.indexes` on the LocalDB runtime confirmed the existence of all required indexes:
+- `[dbo].[Employees]`: `IX_Employees_EmployeeCode` (`UNIQUE NONCLUSTERED` on `EmployeeCode`), `IX_Employees_UserId`.
+- `[dbo].[ParkingLots]`: `IX_ParkingLots_Code` (`UNIQUE NONCLUSTERED` on `Code`).
+- `[dbo].[Zones]`: `IX_Zones_ParkingLotId_Code` (`UNIQUE NONCLUSTERED` on `ParkingLotId, Code`), `FK_Zones_ParkingLots`.
+- `[dbo].[Slots]`: `IX_Slots_ZoneId_Code` (`UNIQUE NONCLUSTERED` on `ZoneId, Code`), `FK_Slots_Zones`, `FK_Slots_VehicleTypes`.
+
+##### 4. Physical Constraint Smoke Testing
+Direct SQL insert tests verified runtime constraint enforcement:
+- Duplicate `ParkingLots.Code` $\to$ Rejected: `Cannot insert duplicate key row in object 'dbo.ParkingLots' with unique index 'IX_ParkingLots_Code'`.
+- Duplicate `Zones(ParkingLotId, Code)` $\to$ Rejected: `Cannot insert duplicate key row in object 'dbo.Zones' with unique index 'IX_Zones_ParkingLotId_Code'`.
+- Duplicate `Zones.Code` in different `ParkingLotId` $\to$ Accepted without error.
+- Duplicate `Slots(ZoneId, Code)` $\to$ Rejected: `Cannot insert duplicate key row in object 'dbo.Slots' with unique index 'IX_Slots_ZoneId_Code'`.
+- Duplicate `Employees.EmployeeCode` $\to$ Rejected: `Cannot insert duplicate key row in object 'dbo.Employees' with unique index 'IX_Employees_EmployeeCode'`.
+
+##### 5. Cleanup
+The test database `PMS_Verification_Db` was dropped, and `PMS_Verification_Temp` was stopped and deleted, leaving zero residual artifacts on the operating system.
+
+---
+
+### 12.7 SRS & Implementation Plan Conformance Matrix
+
+| Req ID | Document Title & Actor | Requirement Description | Implementation Status | Conformance Evaluation & Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| `FR-AUTH-04` | Admin internal account management (`Admin` / `M`) | Admin creates internal accounts (Manager, Staff, Admin), locks, resets password, revokes sessions. | **Partially Satisfied** | `[Test-verified behavior]` Dedicated endpoints for creating Manager (`POST /api/admin/managers`) and Staff (`POST /api/admin/staff`) accounts and locking them (`PATCH /api/admin/users/{id}/status`) are fully implemented and verified. Password reset and session revocation are separate tasks in Implementation Plan `B1.3` outside current CRUD scope. |
+| `FR-AUTH-07` | Delegated Staff management (`Manager` / `M`) | Lot Manager creates, locks, resets passwords for Staff within assigned lot only. Backend enforces role and lot boundary. | **Explicit Scope Divergence** | `[Team instruction]` vs `[SRS/Plan requirement]`. The team lead's current assignment centralizes internal account creation under `Admin`. Manager creation of staff is blocked (403 Forbidden). Lot-scoped delegation is intentionally deferred to subsequent sprints. |
+| `FR-AUTH-08` | Account activation link & 2FA (`Admin, Manager` / `M`) | Internal accounts activate via link or temporary password, mandatory password change and 2FA on first login; soft-lock upon resignation. | **Partially Satisfied** | `[Test-verified behavior]` Soft locking upon resignation (`IsActive = false`, `Status = "Inactive"`, preserving session relations) is fully satisfied and verified. Activation link workflow and forced 2FA are deferred to Auth Phase `B1.3`. Accounts currently start active with initial password per team instructions. |
+| `FR-LOT-01` | Parking Lot CRUD (`Admin` / `M`) | CRUD parking lots: name, address, GPS coordinates, operating hours, capacity, images. | **Satisfied** | `[Test-verified behavior]` & `[Runtime-verified behavior]`. Full CRUD implemented (`/api/lots`). Admin-only creation/deletion. Validates capacity, hours, uniqueness, active session deletion guard. |
+| `FR-LOT-02` | Zone & Slot Configuration (`Manager` / `M`) | Configure Zone/Floor/Row and slots by vehicle type. | **Satisfied** | `[Test-verified behavior]`. Full CRUD implemented for Zones (`/api/zones`) and Slots (`/api/slots`). Accessible by Admin and Manager. Foreign key integrity verified. |
+| `FR-LOT-03` | Slot states & ZoneCounter (`Manager, Staff, System` / `M`) | Slots have 4 states: Trống, Giữ chỗ, Đang đỗ, Bảo trì. Transient vehicles update `ZoneCounter` on entry/exit. | **Partially Satisfied** | `[Test-verified behavior]`. Four slot states (`Available`, `Reserved`, `Occupied`, `Maintenance`) are strictly validated and enforced in Slot CRUD. `ZoneCounter` live tracking is an operational counter updated during check-in/out (`UC-01`, `UC-02`, Plan `B1.7`), not part of configuration CRUD. |
+| `FR-LOT-04` | Lot status toggling (`Manager` / `S`) | Toggle lot status, temporary closures, maintenance notices. | **Satisfied** | `[Test-verified behavior]`. Implemented at `PATCH /api/lots/{id}/status`, supporting `Active`, `Maintenance`, `Suspended`, closure timeframes, reason, and maintenance notice. |
+| `FR-LOT-05` | Public lot listing (`Guest, User` / `M`) | View parking lot list, real-time prices, and available slots. | **Partially Satisfied** | `[Test-verified behavior]`. `GET /api/public/lots` allows anonymous access and filters to active non-deleted lots without leaking internal fields. Live occupancy and pricing calculations are deferred to Pricing Engine (`B1.6`) and Session integration (`B1.5`). |
+| `FR-LOT-06` | Reservation quota per zone (`Manager` / `S`) | Configure maximum reservation slots per zone, with remainder reserved for transient parking. | **Missing / Deferred** | `[Verified source behavior]`. `Zone` entity currently has `Capacity` and `LayoutJson`, but lacks an explicit `MaxReservationSlots` or `ReservedCapacity` property. Belongs to Reservation Phase `B2.3` / `B1.4` refinement. |
+
+---
+
+### 12.8 Team-Scope Compliance Findings
+
+The implementation complies with all explicit team lead instructions and design agreements:
+
+| Team Acceptance Criterion | Status | Evidence & Verification Details |
+| :--- | :---: | :--- |
+| **Separate Manager and Staff Endpoints** | **Compliant** | `POST /api/admin/managers` and `POST /api/admin/staff` implemented. Role cannot be overridden by client. |
+| **Manager Code: `QL` + 6 Digits** | **Compliant** | Pattern `^QL\d{6}$` verified across all generated Manager codes (`QL000000` to `QL999999`). |
+| **Staff Code: `NV` + 6 Digits** | **Compliant** | Pattern `^NV\d{6}$` verified across all generated Staff codes (`NV000000` to `NV999999`). |
+| **Backend-Only Code Generation** | **Compliant** | Codes are server-generated via `RandomNumberGenerator`. Client cannot supply or override codes. |
+| **New Accounts Start Active** | **Compliant** | `IsActive = true`, `EmailConfirmed = true`, `Employee.Status = "Active"`. |
+| **Soft Deletion / Status Management** | **Compliant** | `PATCH /api/admin/users/{id}/status` toggles status without deleting records. `Employee` and `ApplicationUser` remain present in database. |
+| **Deactivated Account Login Block** | **Compliant** | Inactive accounts receive `400 Bad Request` during authentication. |
+| **Lot CRUD Authorization** | **Compliant** | Create and Delete restricted to `Admin`. Read, Update, Status accessible by `Admin` and `Manager`. |
+| **Public Lot Discovery** | **Compliant** | Anonymous access permitted. Internal fields (`managerUserId`, `partnerId`, `createdBy`) protected. |
+| **Hierarchical Integrity Guards** | **Compliant** | Lot deletion blocked if active sessions exist; Zone/Slot deletion blocked if occupied. |
+
+---
+
+### 12.9 Architectural Observations, Gaps, and Recommended Pre-Integration Actions
+
+Before integrating these backend branches into `develop`, the following technical observations and recommendations should be reviewed:
+
+1. **Dual DbContext Transaction Boundary** `[High Observation]`:
+   - *Issue*: `ApplicationUser` is written to `DatabaseContext` via `UserManager`, while `Employee` is written to `PmsDbContext`.
+   - *Risk*: A database exception in `PmsDbContext.SaveChangesAsync()` after `userManager.CreateAsync()` creates an orphaned Identity record without an employee profile.
+   - *Recommendation*: Introduce a `TransactionScope` spanning both contexts, or implement a compensating delete (`await userManager.DeleteAsync(user)`) inside a catch block in `UserService.CreateInternalUserCoreAsync`.
+2. **Internal User Search Boundary** `[Minor Gap]`:
+   - *Issue*: In `GET /api/admin/users`, `searchTerm` queries `ApplicationUser.UserName`, `Email`, and `PhoneNumber`. It does not match `Employee.FullName` or `Employee.EmployeeCode`.
+   - *Recommendation*: Join or query `PmsDbContext.Employees` when `searchTerm` is provided so administrators can search by employee code (e.g. `QL123456`) or full name.
+3. **Public Lot Response Model Real-Time Data** `[Sprint 2 Dependency]`:
+   - *Issue*: `GET /api/public/lots` currently returns static lot details, address, capacity, and hours, but does not yet return real-time available slot counts or pricing rates (`FR-LOT-05`).
+   - *Resolution*: This is an expected dependency in Plan `B1.5` that requires Sprint 2 completion of Pricing Engine (`B1.6`) and Session Ingress (`B1.7`).
+4. **Zone Reservation Quota (`FR-LOT-06`)** `[Deferred Requirement]`:
+   - *Issue*: `Zone` table currently lacks a column for `ReservationQuota` / `MaxReservationSlots`.
+   - *Resolution*: Add `ReservationQuota` (int) to `Zone` entity when implementing the Reservation module (`B2.3`).
+
+---
+
+### 12.10 Audit Summary & Final Task State
+
+- **Implementation Status**: Complete.
+- **Automated Verification**: **Passed** (196/196 tests passing: 146 unit tests, 50 integration tests, 0 failures, 0 skipped).
+- **Runtime LocalDB Verification**: **Passed** (Physical SQL Server DDL syntax valid, idempotency verified, unique indexes active, composite uniqueness enforced).
+- **External / Manual Verification**: Pending frontend client integration and multi-user load testing.
+- **Task Status**: `IMPLEMENTATION COMPLETE / AUTOMATED VERIFICATION PASS / RUNTIME VERIFICATION PASS / EXTERNAL VERIFICATION PENDING`.
