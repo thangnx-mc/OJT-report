@@ -1,340 +1,389 @@
-# Phase 2: Requirements and Implementation Plan Analysis Report
+# Phase 2.1: Validated and Corrected Parking System Requirements Analysis Report
 
-## 1. Document Inventory and Analysis Limitations
+## 1. Executive Summary
 
-### 1.1 Document Inventory
-This analysis is based on two official project documents provided for the Parking System project on October 14, 2026. Both source files were inspected, verified, and archived in the reporting repository:
+This report delivers a rigorous, validated requirements and architectural analysis of the **Parking System** project. It updates and corrects the preliminary Phase 2 analysis by establishing auditable traceability across:
+1. The official Software Requirements Specification (**SRS v1.3**, October 11, 2026, by `@f`).
+2. The official **Implementation Plan** (October 11, 2026, by `@FrankyMilky`).
+3. The empirical source-code baseline documented in the Phase 1 full-stack reconnaissance report (`phase-1-fullstack-codebase-scan.md`).
 
-| Document Role | Source Filename | Byte Size | SHA256 Hash | Author / Date |
+### Key Validated Findings
+
+- **Verified Functional Requirement Inventory**: Exactly **61 active Functional Requirements (FRs)** are specified across 10 functional modules. The apparent numbering gap between `FR-OPS-05` and `FR-OPS-07` is conclusively verified: `FR-OPS-06` (*Quản lý ca / Shift management*) was intentionally removed in v1.3 (along with the former `UC-06`, `Shift` entities, and cash-handover rules) without renumbering subsequent IDs to preserve historical requirement stability.
+- **Verified Use Cases and NFR Counts**: Exactly **10 Use Cases (UC-01 to UC-10)** and **18 Non-Functional Requirements (NFR-01 to NFR-14, plus NFR-3D-01 to NFR-3D-04)** are defined in the SRS and accounted for in the Implementation Plan.
+- **Reconciliation of the `dbo.Users.Id` Question**: The pending question regarding the identifier of `dbo.Users` is classified as **Partially resolved in source code; runtime/deployed-schema confirmation remains necessary**. In the codebase, ASP.NET Identity's `ApplicationUser` maps to table `"Users"`, with primary key column `"UserId"` typed as `nvarchar(450)`. However, the live deployed SQL Server schema cannot be proven from source files alone without connecting to a deployed database.
+- **Implementation Presence vs. Requirement Compliance**: Source code presence does not equate to requirement satisfaction. While user registration, login, profiles, and vehicle CRUD exist in `UsersController.cs` and `UserScreen.jsx`, they lack key SRS v1.3 requirements (such as phone/OTP login and internal 2FA). Core parking operations (lots, zones, slots, manual check-in/out, ANPR, 3D WebGL rendering, reservations, online payments, and reports) have **no API implementation** in the codebase.
+- **Plan Phasing vs. Codebase Inversion**: The Implementation Plan schedules Customer registration and Vehicle management in **Phase 2** (`B2.7`, `F2.3`), whereas the team implemented them first. Meanwhile, the foundational Phase 1 operational core (Lots, Zones, Slots, `ZoneCounter`, Pricing Engine, Manual POS sessions) remains completely unbuilt.
+- **Scope Boundary Discipline**: SRS Section 2.5 explicitly excludes Subscriptions/passes, E-invoices, Wallets/Loyalty points, Tenant multi-tenancy, Partner revenue sharing, and Shift management. The 63 scaffolded tables in `PmsDbContext.cs` include legacy entities related to these excluded areas. However, **no files or entities should be deleted unilaterally** without a formal team dependency review and migration impact assessment.
+
+---
+
+## 2. Source Documents and Validation Method
+
+### 2.1 Primary Document Artifacts
+The analysis was performed directly on the original DOCX source files archived in the reporting repository:
+
+| Document Identity | Physical File Name | File Size | SHA-256 Hash | Author & Date |
 | :--- | :--- | :--- | :--- | :--- |
 | **SRS Document** | `SRS v1.3 – Hệ thống Quản lý Nhiều Bãi Đỗ Xe.docx` | 137,445 bytes | `F72686FB2CED8ED23070850F6F2FFF1661E33F054E9869928685C9F87BA5834A` | `@f` · Oct 11, 2026 |
 | **Implementation Plan** | `Implementation Plan - Hệ thống Quản lý Nhiều Bãi Đỗ Xe.docx` | 118,372 bytes | `333630CB21CD5D69EFD01A74D099A356A045B58B0632A69D5244CBA96AADCFBA` | `@FrankyMilky` · Oct 11, 2026 |
 
-**Archived Location**:
-`C:\DEV\OJT-report\reports\parking-system\source-documents/`
-Both files are byte-identical to their original inputs.
+*Location*: Both files are preserved byte-for-byte in `reports/parking-system/source-documents/`.
 
-### 1.2 Analysis Limitations and Extraction Notes
-1. **Embedded Diagrams**:
-   - `SRS v1.3`: Contains one embedded image (`word/media/image1.png`, 122,502 bytes) illustrating three finite state machines: **Slot**, **Session**, and **Reservation (Đặt chỗ)**. The image transitions and state labels were completely extracted and cross-checked against Section 4.2 of the text.
-   - `Implementation Plan`: Contains one embedded image (`word/media/image1.png`, 108,669 bytes) depicting the high-level 3-phase delivery roadmap. All milestones and text labels were completely extracted and cross-checked against Section 5.
-2. **Missing Quantitative Timelines**:
-   - The Implementation Plan calculates effort in **person-days** (người-ngày) and assumes 2-week sprints, but explicitly omits calendar start dates, calendar deadlines, and team staffing headcount (noted in Plan Section 5 as dependent on team capacity).
-3. **Repository Scope Boundary**:
-   - In accordance with Phase 2 rules, source code was not re-audited broadly. The Phase 1 full-stack reconnaissance report (`phase-1-fullstack-codebase-scan.md`) was utilized strictly as supplementary baseline evidence.
-
----
-
-## 2. Executive Summary
-
-This evaluation analyzes **SRS v1.3** and its companion **Implementation Plan** to establish requirement completeness, feasibility, cross-document alignment, and operational readiness before proceeding with further development.
-
-### Key Conclusions
-1. **High Quality of Functional Specifics**: SRS v1.3 represents a mature, well-scoped requirements baseline. Key improvements over prior drafts (v1.0–v1.2) include discarding shift management, formalizing a two-mode parking model (individual slot tracking for reservations vs. aggregate `ZoneCounter` for transient vehicles), enforcing an Exit Window on paid sessions, mandating Maker-Checker authorization for financial exceptions, requiring offline autonomy at gates, and enforcing privacy on public 3D streams.
-2. **Critical Plan-to-Code Sequence Inversion**:
-   - The **Implementation Plan** schedules User/Customer registration, profile management, and vehicle CRUD in **Phase 2 (Automation & Reservations)** under items `B2.7` and `F2.3`.
-   - In contrast, the **existing codebase** already implemented User registration, profile management, vehicle CRUD, and default vehicle toggling (`UsersController`, `UserProfileService`, `LoginScreen.jsx`, `UserScreen.jsx`).
-   - Conversely, **none of Phase 1's planned MVP foundation** (Parking Lots, Zones, Slots, ZoneCounter, Manual Session check-in/out, POS interface, or basic pricing engine) exists in the codebase today. The project implemented Phase 2 customer features ahead of Phase 1 core operations.
-3. **Ghost Schema vs. Out-of-Scope Modules**:
-   - SRS v1.3 explicitly places **Out of Scope**: Monthly/Subscription passes, E-invoices, Wallets/Loyalty points, Tenant multi-tenancy, Partner revenue sharing, and Shift management (Section 2.5).
-   - However, the backend repository's `PmsDbContext.cs` and `PMS.Core/Entities` contain 63 scaffolded tables inherited from legacy `pmsv2.sql`, including `Subscriptions`, `Einvoices`, `Wallets`, `Shifts`, `ShiftSchedules`, `Partners`, and `LoyaltyTransactions`. Maintaining these unused entities introduces schema noise and architectural technical debt.
-4. **Resolution of Blocking Open Question 1**:
-   - SRS v1.3 Open Question 1 and Implementation Plan Table 6 declare: *"What data type is `dbo.Users.Id`? Blocks B1.2 and all database scripts."*
-   - Fact: The codebase already resolved this in `20261001025913_InitialCreate.cs` and `ApplicationUserConfiguration.cs`, where `dbo.Users.UserId` is defined as `nvarchar(450)`. This question can be closed immediately.
-5. **Significant Architectural Dependencies**:
-   - Phase 2 success heavily hinges on the **Edge Service** (IoT gate controller) and hardware ANPR SDK integration. While software tasks are estimated, hardware lead times, MQTT topic topologies, and network disconnection edge-cases represent the highest project delivery risk.
+### 2.2 Validation Methodology
+1. **Direct XML Extraction**: Both documents were unpacked and parsed at the XML node level (`word/document.xml`) to extract every table cell, heading, text element, footnote, and embedded image reference without translation loss or summary distortion.
+2. **Embedded Diagram Verification**:
+   - `SRS v1.3`: Extracted and verified `word/media/image1.png` (finite state machine diagram for Slot, Session, and Reservation).
+   - `Implementation Plan`: Extracted and verified `word/media/image1.png` (3-phase delivery roadmap diagram).
+3. **Evidence Classification Standards**:
+   - `[SOURCE FACT]`: Explicitly stated in the SRS or Implementation Plan text.
+   - `[CODE OBSERVATION]`: Directly verified in repository source files.
+   - `[ANALYTICAL FINDING]`: Deduction based on comparing sources and code.
+   - `[UNVERIFIED / UNKNOWN]`: Requires runtime execution or stakeholder decision.
+4. **Git Safety Compliance**: Zero Git commands were run against the team repositories (`C:\DEV\OJT-FSA-Team3` and subdirectories). All Git interactions are restricted exclusively to `C:\DEV\OJT-report`.
 
 ---
 
-## 3. SRS Analysis (SRS v1.3)
+## 3. Verified FR Inventory and Traceability Matrix
 
-### 3.1 Purpose, Scope, and System Boundaries
-- **System Objective**: Automate end-to-end multi-lot parking operations: vehicle ingress/egress, fee calculation, parking space management, online reservations, payments, and chain-wide reporting, supplemented by a 3D parking lot digital twin rendered entirely in WebGL on the client (SRS 1.1).
-- **Core Scope**:
-  - Web Admin / Dashboard (Admin, Manager).
-  - POS Staff application (touch-optimized, <= 3 taps per transaction).
-  - Customer Portal (Web & App for User, Guest).
-  - IoT Edge Service running locally at each gate interfacing with ANPR cameras, automated barriers, ticket printers, RFID/QR scanners, and LED message boards.
-- **Explicit Out-of-Scope Items (SRS 2.5)**:
-  - Monthly / periodic subscription passes (weekly, monthly, corporate).
-  - Official Electronic Tax Invoices (E-invoices); system issues payment receipts only.
-  - Internal stored-value wallets, Auto-Pay, loyalty point programs, user reviews/complaints.
-  - Multi-tenant multi-owner management, public open APIs, partner revenue-sharing.
-  - Shift scheduling and staff cash handover management.
-  - Per-slot ultrasonic/video sensors for transient vehicles.
-  - AI predictive analytics and external map navigation integrations (Google Maps, Mapbox).
+### 3.1 Auditable Functional Requirement Inventory
+The SRS contains **61 active Functional Requirements** across 10 modules:
+- `FR-AUTH` (8 requirements): `FR-AUTH-01` through `FR-AUTH-08`.
+- `FR-LOT` (6 requirements): `FR-LOT-01` through `FR-LOT-06`.
+- `FR-3D` (8 requirements): `FR-3D-01` through `FR-3D-08`.
+- `FR-OPS` (8 requirements): `FR-OPS-01` through `FR-OPS-05`, and `FR-OPS-07` through `FR-OPS-09` (*Note: `FR-OPS-06` was removed in v1.3*).
+- `FR-PRC` (5 requirements): `FR-PRC-01` through `FR-PRC-05`.
+- `FR-RSV` (6 requirements): `FR-RSV-01` through `FR-RSV-06`.
+- `FR-PAY` (7 requirements): `FR-PAY-01` through `FR-PAY-07`.
+- `FR-CUS` (3 requirements): `FR-CUS-01` through `FR-CUS-03`.
+- `FR-RPT` (4 requirements): `FR-RPT-01` through `FR-RPT-04`.
+- `FR-SYS` (6 requirements): `FR-SYS-01` through `FR-SYS-06`.
+- **Total Active FRs**: $8 + 6 + 8 + 8 + 5 + 6 + 7 + 3 + 4 + 6 = \mathbf{61}$.
 
-### 3.2 Actors and Roles
-SRS v1.3 defines 5 actors, but explicitly clarifies that the database contains only **4 internal system roles** (Guest has no account):
-1. **Admin (A1)**: Full system administration, Manager provisioning, global parameters, gateway settings, device catalogs, audit logs, backup/restore. No daily parking operations.
-2. **Manager (A2)**: Operational management of assigned parking lots: zones, slots, pricing rules, staff provisioning/assignment, 3D Layout Editor, lost ticket approvals, refund approvals (Maker-Checker), daily reconciliation, reporting.
-3. **Staff (A3)**: Gate operator at POS: manual check-in/out, verifying ANPR blacklist/discrepancies, lost ticket verification, cash collection, incident logging, refund proposals.
-4. **User (A4)**: Public registered customer: vehicle profile, 3D reservation booking, deposit payment, QR check-in, live parking session tracking, pre-payment.
-5. **Guest (A5)**: Transient customer (no account): views lot vacancies/3D layout (plates hidden), pulls QR ticket/card at gate, pays cash or dynamic QR at exit.
+### 3.2 The `FR-OPS-06` Gap Investigation
+- **Inquiry**: Does `FR-OPS-06` exist, or is it a documentation omission?
+- **Finding**: `FR-OPS-06` does **not** exist as an active requirement in SRS v1.3.
+- **Evidence**:
+  1. SRS Section 2.4 (Change Log from v1.2): *"Bỏ FR-OPS-06, UC-06, 'phân lịch ca' trong FR-SYS-01, thực thể Shift, 'chênh lệch tiền ca' trong FR-RPT-03 và dòng ca trong ma trận."*
+  2. SRS Section 3 (Preamble): *"Có 61 yêu cầu chức năng chia theo 10 module... Mã FR giữ ổn định so với v1.2; FR-OPS-06 (quản lý ca) bị bỏ và không đánh số lại."*
+- **Conclusion**: The gap between `FR-OPS-05` and `FR-OPS-07` is deliberate. The total denominator of 61 active requirements is verified.
 
-### 3.3 Key Architectural Principles Introduced in v1.3 (SRS 2.3)
-1. **Two-Mode Space Management**:
-   - **Reserved Vehicles**: Tracked by specific physical slot (`SlotId`).
-   - **Transient Vehicles (Guest/Walk-in)**: Tracked strictly via aggregate **`ZoneCounter`** on entry/exit. No slot assignment is performed.
-   - 3D layout displays occupied slots for reserved vehicles and zone-level density heatmaps.
-2. **Decoupled 3D Layout**:
-   - `Slot` is the primary business entity.
-   - `Layout3D` stores only visual metadata (coordinates, rotation, floor, GLB asset URI) and maintains a **Draft** vs. **Published** lifecycle.
-3. **Exit Window**:
-   - Customers paying in advance receive a configurable grace period (default: 15 minutes) to exit. Exceeding this window triggers automated overtime surcharge calculations.
-4. **Maker-Checker Security**:
-   - Financial adjustments, refunds, manual free exits, and lost ticket fee waivers require two distinct internal identities: one to propose (Staff/Manager) and a different Manager to approve.
-5. **Delegated Account Provisioning**:
-   - Admin creates Manager; Manager creates Staff strictly within their assigned parking lot. No public self-registration for internal roles.
-6. **Mandatory Edge Offline Autonomy**:
-   - Edge Service caches open sessions, reservation QRs, blacklists, and rate cards. Gates must continue processing entries and exits when WAN connectivity fails (cash-only during offline).
-7. **Privacy Preservation on 3D Streams**:
-   - Public WebSocket channels stream only slot status and zone occupancy counts. License plate numbers are strictly forbidden on public feeds.
+### 3.3 Complete Traceability Matrix
+The table below maps every active Functional Requirement to its source section, stated priority, corresponding Implementation Plan task, planned phase, plan coverage assessment, and source-code status.
 
-### 3.4 Finite State Machines (SRS 4.2)
-1. **Slot State Machine**:
-   $$\text{Bảo trì} \longleftrightarrow \text{Trống} \xrightarrow{\text{User chọn slot}} \text{Giữ chỗ} \xrightarrow{\text{Check-in QR}} \text{Đang đỗ} \xrightarrow{\text{Xe ra}} \text{Trống}$$
-   *(Abort path: Giữ chỗ $\rightarrow$ Trống upon expiration or cancellation).*
-2. **Session State Machine**:
-   $$\text{Đang đỗ} \xrightarrow{\text{Tới cổng ra}} \text{Chờ thanh toán} \xrightarrow{\text{Thanh toán xong}} \text{Đã thanh toán} \xrightarrow{\text{Barie mở}} \text{Hoàn tất}$$
-   *(Exception paths: Đang đỗ $\rightarrow$ Xử lý thủ công $\rightarrow$ Chờ thanh toán; Đã thanh toán $\xrightarrow{\text{Quá Exit Window}}$ Chờ thanh toán).*
-3. **Reservation State Machine**:
-   $$\text{Chờ cọc} \xrightarrow{\text{Cọc thành công}} \text{Đã xác nhận} \xrightarrow{\text{Quét QR tại cổng}} \text{Đã check-in} \xrightarrow{\text{Xe ra}} \text{Hoàn tất}$$
-   *(Failure paths: Chờ cọc $\xrightarrow{\text{Hết hạn cọc}}$ Hết hạn; Đã xác nhận $\xrightarrow{\text{User hủy}}$ Hủy; Đã xác nhận $\xrightarrow{\text{Hết thời gian giữ}}$ No-show).*
-
-### 3.5 Non-Functional Requirements Summary
-- **Throughput & Latency (NFR-01)**: Gate transit processing (ANPR to barrier open) $\le 3$ seconds (including online payment sync).
-- **Reporting Performance (NFR-02)**: 12-month dashboard query across 50 lots loads in $\le 3$ seconds.
-- **Scalability (NFR-03)**: Support $\ge 100$ parking lots and 10,000 vehicle transits/day/lot via horizontal scaling.
-- **Availability (NFR-04)**: Cloud uptime $\ge 99.5\%$; gates operate offline via local Edge caching.
-- **Financial Immutability (NFR-08)**: Financial records are immutable; adjustments must be separate debit/credit transactions with full audit trails.
-- **Disaster Recovery (NFR-09)**: RPO $\le 15$ minutes, RTO $\le 2$ hours.
-- **3D Graphics (NFR-3D-01 to 04)**: $\ge 30$ FPS on mid-range client hardware for 500-slot lots; initial GLB load $\le 5$ seconds ($\le 10$ MB/lot, Draco/KTX2 compressed); state update delta $\le 2$ seconds via WebSocket; automatic fallback to 2D canvas/SVG.
-
----
-
-## 4. Implementation Plan Analysis
-
-### 4.1 Architecture and Structural Strategy
-- **Backend Architectural Style**: Modular Monolith on ASP.NET Core 9, Entity Framework Core 9, and ASP.NET Identity.
-- **Data & Middleware Infrastructure**:
-  - Microsoft SQL Server for primary transactional persistence.
-  - Redis for `ZoneCounter` caching, rate limiting, and SignalR scale-out backplane.
-  - MQTT broker + REST API for Edge Service communication.
-  - Hangfire or Quartz.NET for scheduled background jobs (reservation expiry, payment reconciliation, image retention pruning).
-  - Blob Storage + CDN for 3D GLB assets and camera capture images.
-- **Frontend Breakdown**:
-  - Web Admin: React + TypeScript (management, reports, 3D Layout Editor).
-  - POS Staff: Touch-optimized Android or Windows client (maximum 3 taps per flow).
-  - Customer App/Web: React Native or responsive Web (search, 3D booking, payment).
-  - Shared 3D Renderer Library: Three.js WebGL component shared across all three frontends.
-
-### 4.2 Three-Phase Implementation Roadmap
-The plan structures 61 FRs, 10 UCs, and 18 NFRs across 3 sequential phases:
-
-```mermaid
-flowchart LR
-    P1["Phase 1: MVP Core (1-3 Lots)<br>Effort: 232 person-days<br>Focus: Lots, RBAC, Manual Session, Cash, 3D Viewer"]
-    P2["Phase 2: Automation & Booking<br>Effort: 242 person-days<br>Focus: Edge, ANPR, Reservations, Online Pay, Offline"]
-    P3["Phase 3: Optimization & Polish<br>Effort: 107 person-days<br>Focus: 3D Layout Editor, Dynamic Pricing, LOD"]
-
-    P1 -->|"Gate: 1 lot 24h zero drift, cash matches report"| P2
-    P2 -->|"Gate: Transit <= 3s, offline sync verified"| P3
-```
-
-- **Phase 1: MVP Operations (232 person-days: BE 108, FE 124)**:
-  - Backend: B1.1 to B1.11 (CI/CD, Schema 1, RBAC, Parking CRUD, public APIs, Pricing engine, manual Session, cash payment, lost tickets, basic reporting).
-  - Frontend: F1.1 to F1.13 (Design system, internal login + 2FA, staff management, parking CRUD, pricing UI, POS check-in/out, 3D viewer library, 2D fallback, guest public page, revenue report).
-  - Acceptance Gate: 1 parking lot operates for 1 full business day with zero `ZoneCounter` drift and 100% cash reconciliation.
-- **Phase 2: Automation & Reservations (242 person-days: BE 134, FE 108)**:
-  - Backend: B2.1 to B2.11 (EdgeSync MQTT/REST, ANPR ingestion, reservation engine, VNPay/MoMo/VietQR gateways, Exit Window logic, gateway reconciliation, customer profile API, notifications, automated backup).
-  - Frontend: F2.1 to F2.10 (POS gate monitoring, dynamic QR display, customer app auth/profile, 3D slot booking, online checkout, parking history, admin gateway configuration, push notifications).
-  - Acceptance Gate: Vehicle transit $\le 3$ seconds; gate operates when physically disconnected from WAN and synchronizes queued events accurately upon reconnection.
-- **Phase 3: Optimization & Advanced Features (107 person-days: BE 46, FE 61)**:
-  - Backend: B3.1 to B3.6 (Layout3D Draft/Publish API, CDN asset storage, Dynamic Pricing engine, slot pathfinding API, 12-month analytics optimization).
-  - Frontend: F3.1 to F3.5 (3D Layout Editor, LOD & Draco compression, vehicle navigation markers, dynamic pricing management, advanced manager analytics).
-  - Acceptance Gate: 500-slot lot maintains $\ge 30$ FPS on mid-range test devices.
-
-### 4.3 Total Project Effort Summary
-- **Backend Effort**: 288 person-days (~58 sprints of 2-week individual equivalents).
-- **Frontend Effort**: 293 person-days.
-- **Total Combined Development Effort**: **581 person-days** (excluding real-hardware testing and QA cycles).
-
----
-
-## 5. Cross-Document Comparison
-
-### 5.1 Alignment and Consistency
-- **Scope Alignment**: Both documents agree on the functional boundaries, 10 modules, 10 Use Cases, and the removal of shift management.
-- **Phasing Alignment**: The 3 phases in the Implementation Plan precisely reflect the roadmap outlined in Section 9 of the SRS.
-- **Acceptance Criteria**: The acceptance gates for each phase in the plan match the criteria stated in SRS Section 9.
-
-### 5.2 Critical Divergences and Gaps
-
-| Dimension | SRS v1.3 Specification | Implementation Plan Specification | Analysis & Project Impact |
-| :--- | :--- | :--- | :--- |
-| **User/Vehicle API Scheduling** | `FR-AUTH-01`, `FR-CUS-01` are Must (M) requirements. | Scheduled in **Phase 2** (`B2.7`, `F2.3`). | **Sequence Inversion with Codebase**: The existing team codebase already built User registration, login, and vehicle management. If the team follows the Plan strictly, they would be planning already-completed features while missing core Phase 1 dependencies. |
-| **`dbo.Users.Id` Type** | Open Question 1 states Id type is unknown and blocks database design. | Plan Table 6 states Question 1 blocks `B1.2` and all database scripts. | **False Blocker**: The codebase already established `dbo.Users.UserId` as `nvarchar(450)` in EF Core migrations. This does not block development. |
-| **Zone Overflow Behavior** | Open Question 4 asks whether to block or admit transient cars when zone is full. | Assigned to `B1.7`, `B2.2`, `F2.1`, but rule remains unfinalized. | **Operational Risk**: If an ANPR camera detects a transient car at an entry gate when `ZoneCounter == 0`, software behavior is undefined. |
-| **Deposit & No-show Calculation** | Open Question 3: Is deposit fixed cash or % of first hour? | Assigned to `B2.3`, `F2.4`, `F2.7`, but formula is not defined. | **Financial Risk**: Cannot implement reservation checkout until the pricing policy formula is formally decided. |
-| **Manager Multi-lot Scope** | Open Question 7: Can a Manager oversee multiple lots? | In Plan `B1.3`, multi-lot scope is assumed supported via `UserParkingLot`. | Requires BA confirmation whether Maker-Checker allows a single Manager to self-approve if no second Manager exists. |
-| **Edge Hardware Responsibility** | SRS states Edge Service runs on IoT gateway. | Plan assumes Edge Service is built by a separate hardware team. | **Integration Boundary Risk**: If the hardware team's interface changes, `B2.1` and `F2.1` will require redesign. |
-
----
-
-## 6. Requirement Traceability Matrix
-
-The matrix below maps each of the 61 Functional Requirements, plus key NFRs and UCs, to the Implementation Plan items and cross-references their current status in the existing codebase.
-
-*Coverage Assessment Legend*:
-- `COVERED`: The requirement is explicitly addressed in the Implementation Plan with dedicated items and effort.
-- `PARTIALLY COVERED`: Addressed in part, but critical sub-rules or technical dependencies are omitted.
+*Coverage Assessment Labels*:
+- `COVERED`: Explicitly addressed in the plan with tasks and effort.
+- `PARTIALLY COVERED`: Addressed in part; specific sub-rules or edge-cases omitted.
+- `PLANNING SEQUENCING DIFFERENCE`: Scheduled in a phase different from current codebase progress.
 - `NOT MENTIONED IN PLAN`: Absent from the plan work-breakdown structure.
-- `CONFLICT`: A direct conflict exists in phasing, scope, or business logic.
 
-| Req ID | Requirement Summary | SRS Ref | Plan Item(s) | Plan Phase | Coverage Assessment | Codebase Status (Phase 1 Baseline) | Gap / Clarification Needed |
+| Req ID | Requirement Summary | SRS Ref | Priority | Plan Task(s) | Plan Phase | Plan Coverage | Current Codebase Status |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **FR-AUTH-01** | Public User registration/login (OTP/password) | 3.1 | `B2.7`, `F2.3` | Phase 2 | `CONFLICT` (Phasing) | **Implemented in Codebase** | Plan schedules this for Phase 2, but BE & FE already implemented password auth. OTP is mocked in FE. |
-| **FR-AUTH-02** | Internal staff login + 2FA | 3.1 | `B1.3`, `F1.2` | Phase 1 | `COVERED` | Not Implemented | Backend lacks 2FA logic; FE only has simulated 2FA. |
-| **FR-AUTH-03** | RBAC across 4 roles + lot scope | 3.1 | `B1.3` | Phase 1 | `COVERED` | Not Implemented | Current code has string `Role` on user; lacks `UserParkingLot` table. |
-| **FR-AUTH-04** | Admin user management (internal) | 3.1 | `B1.3`, `F1.3` | Phase 1 | `COVERED` | Partially Implemented | `UsersController` has Admin view profile, lacks full management. |
-| **FR-AUTH-05** | Audit logging of administrative actions | 3.1 | `B1.3`, `F1.3` | Phase 1 | `COVERED` | Not Implemented | Entity `AuditLog` exists in Core, but no logging service writes to it. |
-| **FR-AUTH-06** | Public guest browsing without login | 3.1 | `B1.5`, `F1.11`| Phase 1 | `COVERED` | Partially Implemented | `GET /api/users` is public; FE has public view, but lacks lot data. |
-| **FR-AUTH-07** | Manager creates/manages Staff in lot | 3.1 | `B1.3`, `F1.3` | Phase 1 | `COVERED` | Not Implemented | No endpoint or service logic exists for delegated staff creation. |
-| **FR-AUTH-08** | Internal account activation & forced 2FA | 3.1 | `B1.3`, `F1.2` | Phase 1 | `COVERED` | Not Implemented | No activation link or initial password change workflow. |
-| **FR-LOT-01** | CRUD parking lots (Admin) | 3.2 | `B1.4`, `F1.4` | Phase 1 | `COVERED` | Not Implemented | Entity `ParkingLot` exists; zero API controllers or endpoints. |
-| **FR-LOT-02** | Configure Zone/Floor and Slots by vehicle | 3.2 | `B1.4`, `F1.4` | Phase 1 | `COVERED` | Not Implemented | Entities `Zone`, `Slot` exist; zero API controllers or endpoints. |
-| **FR-LOT-03** | 4 slot states + ZoneCounter tracking | 3.2 | `B1.4` | Phase 1 | `COVERED` | Not Implemented | Crucial domain logic; no `ZoneCounter` table in current DB schema. |
-| **FR-LOT-04** | Lot status toggling & maintenance notice | 3.2 | `B1.4`, `F1.4` | Phase 1 | `COVERED` | Not Implemented | No lot status endpoint. |
-| **FR-LOT-05** | Public lot listing with live occupancy | 3.2 | `B1.5`, `F1.11`| Phase 1 | `COVERED` | Not Implemented | No public lot query endpoint. |
-| **FR-LOT-06** | Configure reservation slot quotas | 3.2 | `B1.4`, `F1.4` | Phase 1 | `COVERED` | Not Implemented | No quota management logic. |
-| **FR-3D-01** | 3D lot model rendering from published layout| 3.3 | `B1.5`, `F1.9` | Phase 1 | `COVERED` | Not Implemented | FE has 2D SVG canvas; no Three.js or GLB ingestion. |
-| **FR-3D-02** | Real-time color updates via WebSocket | 3.3 | `B1.5`, `F1.9` | Phase 1 | `COVERED` | Not Implemented | No SignalR hub in BE; FE uses client-side simulated state. |
-| **FR-3D-03** | 3D interactions (rotate, pan, zoom, click)| 3.3 | `F1.9` | Phase 1 | `COVERED` | Not Implemented | Must be implemented in Three.js shared library. |
-| **FR-3D-04** | Select empty slot on 3D to book | 3.3 | `F2.4` | Phase 2 | `COVERED` | Partially Mocked | FE allows clicking SVG slot, but booking is in-memory mock. |
-| **FR-3D-05** | 3D Layout Editor (Draft/Publish) | 3.3 | `B3.1`, `F3.1` | Phase 3 | `COVERED` | Not Implemented | Complex WebGL editor scheduled for Phase 3. |
-| **FR-3D-06** | 2D canvas/SVG fallback + LOD | 3.3 | `F1.10` | Phase 1 | `COVERED` | Partially Mocked | FE currently uses 2D layout as primary (no 3D exists). |
-| **FR-3D-07** | Parked car marker & pathfinding guide | 3.3 | `B3.4`, `F3.3` | Phase 3 | `COVERED` | Not Implemented | Dependent on 3D engine in Phase 3. |
-| **FR-3D-08** | Public 3D data privacy (no license plates)| 3.3 | `B1.5` | Phase 1 | `COVERED` | Not Implemented | Must enforce DTO projection excluding vehicle plate strings. |
-| **FR-OPS-01** | Check-in flow (ANPR / QR ticket / Barrier) | 3.4 | `B1.7`, `B2.2`, `F1.7`| Phase 1 / 2 | `COVERED` | Not Implemented | Phase 1 manual POS; Phase 2 automated ANPR. |
-| **FR-OPS-02** | Check-out flow (Exit Window / Payment) | 3.4 | `B1.7`, `B2.2`, `F1.7`| Phase 1 / 2 | `COVERED` | Not Implemented | No check-out session endpoints exist. |
-| **FR-OPS-03** | Manual check-in/out with mandatory reason | 3.4 | `B1.7`, `F1.7` | Phase 1 | `COVERED` | Not Implemented | Requires POS interface with touch reason prompt. |
-| **FR-OPS-04** | Plate discrepancy verification at gate | 3.4 | `B1.7`, `B2.2`, `F2.1`| Phase 1 / 2 | `COVERED` | Not Implemented | Image matching comparison logic. |
-| **FR-OPS-05** | Lost ticket handling with Maker-Checker | 3.4 | `B1.8`, `F1.8` | Phase 1 | `COVERED` | Not Implemented | Requires two-actor proposal/approval workflow. |
-| **FR-OPS-07** | Blacklist/Whitelist license plate management| 3.4 | `B2.2`, `F2.7` | Phase 2 | `COVERED` | Not Implemented | Entity `PlateList` exists in Core; no endpoints exist. |
-| **FR-OPS-08** | Incident recording with photo attachment | 3.4 | `B2.9`, `F2.7` | Phase 2 | `COVERED` | Not Implemented | Entity `Incident` exists in Core. |
-| **FR-OPS-09** | Edge Service offline gate autonomy | 3.4 | `B2.1`, `F2.1` | Phase 2 | `COVERED` | Not Implemented | Crucial offline caching and idempotency synchronization. |
-| **FR-PRC-01** | Configure pricing rules by lot/zone/vehicle | 3.5 | `B1.6`, `F1.5` | Phase 1 | `COVERED` | Not Implemented | Entity `PricingRule` exists; no evaluation engine. |
-| **FR-PRC-02** | Fee calculation models (blocks, hourly, etc)| 3.5 | `B1.6` | Phase 1 | `COVERED` | Not Implemented | Requires complex domain calculation service. |
-| **FR-PRC-03** | Grace period, overnight surcharge, penalty | 3.5 | `B1.6`, `B2.5` | Phase 1 / 2 | `COVERED` | Not Implemented | Logic tied to Exit Window. |
-| **FR-PRC-04** | Historical pricing rule versioning | 3.5 | `B1.6`, `F1.5` | Phase 1 | `COVERED` | Not Implemented | Entity `PricingRuleHistory` exists. |
-| **FR-PRC-05** | Dynamic pricing (peak/holiday) & vouchers | 3.5 | `B3.3`, `F3.4` | Phase 3 | `COVERED` | Not Implemented | Scheduled for Phase 3 optimization. |
-| **FR-RSV-01** | Search lots & preview 3D before booking | 3.6 | `F2.4` | Phase 2 | `COVERED` | Partially Mocked | FE has search mock; no live lot query. |
-| **FR-RSV-02** | Slot booking with hold time & deposit | 3.6 | `B2.3`, `F2.4` | Phase 2 | `COVERED` | Not Implemented | Deposit formula must be finalized. |
-| **FR-RSV-03** | Change/Cancel reservation & refund deposit | 3.6 | `B2.3`, `F2.4` | Phase 2 | `COVERED` | Not Implemented | Cancellation policy dependent on Question 3. |
-| **FR-RSV-04** | Generate QR reservation check-in code | 3.6 | `B2.3`, `F2.2` | Phase 2 | `COVERED` | Partially Mocked | FE displays hardcoded SVG QR code. |
-| **FR-RSV-05** | Auto-expire hold & charge no-show fee | 3.6 | `B2.3` | Phase 2 | `COVERED` | Not Implemented | Requires background worker (Hangfire/Quartz). |
-| **FR-RSV-06** | Configure reservation policy (hold, deposit) | 3.6 | `B2.3`, `F2.7` | Phase 2 | `COVERED` | Not Implemented | Admin configuration endpoint. |
-| **FR-PAY-01** | Cash collection at POS | 3.7 | `B1.8`, `F1.7` | Phase 1 | `COVERED` | Not Implemented | POS cash flow. |
-| **FR-PAY-02** | Online payment (VNPay, MoMo, VietQR) | 3.7 | `B2.4`, `F2.5` | Phase 2 | `COVERED` | Partially Mocked | FE has mock modal; no gateway webhook integration. |
-| **FR-PAY-03** | Dynamic QR payment at exit for Guest | 3.7 | `B2.4`, `F2.2` | Phase 2 | `COVERED` | Not Implemented | Dynamic VietQR generation from payment amount. |
-| **FR-PAY-04** | Refund/adjustment via Maker-Checker | 3.7 | `B1.8`, `F1.8` | Phase 1 | `COVERED` | Not Implemented | Immutable ledger with separate adjustment transactions. |
-| **FR-PAY-05** | Daily reconciliation with Payment Gateway | 3.7 | `B2.6`, `F2.7` | Phase 2 | `COVERED` | Not Implemented | Daily automated reconciliation job. |
-| **FR-PAY-06** | Issue digital receipt via Push/SMS/Email | 3.7 | `B2.8`, `F2.5` | Phase 2 | `COVERED` | Not Implemented | Basic email service exists in BE; lacks receipt templates. |
-| **FR-PAY-07** | Exit Window countdown & overtime fees | 3.7 | `B2.5`, `F2.5` | Phase 2 | `COVERED` | Partially Mocked | FE has simulated timer; no BE session window tracking. |
-| **FR-CUS-01** | Manage customer profile and vehicles | 3.8 | `B2.7`, `F2.3` | Phase 2 | `CONFLICT` (Phasing) | **Implemented in Codebase** | Fully active in `UsersController` & `UserScreen.jsx`. |
-| **FR-CUS-02** | View parking session history & entry photos| 3.8 | `B2.7`, `F2.6` | Phase 2 | `COVERED` | Not Implemented | No history endpoint exists in backend. |
-| **FR-CUS-03** | Track live parked vehicle & pre-pay | 3.8 | `B2.7`, `F2.5` | Phase 2 | `COVERED` | Partially Mocked | FE has simulated active card; BE has zero session APIs. |
-| **FR-RPT-01** | Multi-lot overview dashboard | 3.9 | `B1.10`, `F1.12`| Phase 1 | `COVERED` | Not Implemented | Dashboard endpoints not implemented in BE. |
-| **FR-RPT-02** | Revenue reports with multiple filters | 3.9 | `B1.10`, `F1.12`| Phase 1 | `COVERED` | Not Implemented | Financial aggregation endpoints missing. |
-| **FR-RPT-03** | Exception reports (overtime, manual barrier)| 3.9 | `B2.9`, `F2.8` | Phase 2 | `COVERED` | Not Implemented | Requires incident and audit log aggregation. |
-| **FR-RPT-04** | Export reports to Excel/PDF | 3.9 | `B2.9`, `F2.8` | Phase 2 | `COVERED` | Not Implemented | Document generation libraries not configured. |
-| **FR-SYS-01** | Employee management & gate assignment | 3.10 | `B1.9`, `F1.3` | Phase 1 | `COVERED` | Not Implemented | Staff management endpoints missing. |
-| **FR-SYS-02** | Global parameters (currency, timezone, exit)| 3.10 | `B1.9`, `F1.6` | Phase 1 | `COVERED` | Not Implemented | System setting persistence missing. |
-| **FR-SYS-03** | Device catalog & Online/Offline heartbeat | 3.10 | `B1.9`, `B2.9`, `F1.6`| Phase 1 / 2 | `COVERED` | Not Implemented | Heartbeat tracking not implemented. |
-| **FR-SYS-04** | Payment gateway keys & webhook configuration| 3.10 | `B2.4`, `F2.7` | Phase 2 | `COVERED` | Not Implemented | Gateway credential store missing. |
-| **FR-SYS-05** | Backup and Disaster Recovery | 3.10 | `B2.10` | Phase 2 | `COVERED` | Not Implemented | Backup automation missing. |
-| **FR-SYS-06** | System notifications (Push/SMS/Email) | 3.10 | `B2.8`, `F2.9` | Phase 2 | `COVERED` | Partially Implemented | MailKit configured; Push/SMS gateways not integrated. |
+| **FR-AUTH-01** | User registration/login (Phone/Email + OTP/Pwd) | 3.1 | Must | `B2.7`, `F2.3` | Phase 2 | `PLANNING SEQUENCING DIFFERENCE` | Partially aligned in source (Pwd auth built; OTP absent) |
+| **FR-AUTH-02** | Internal staff login + 2FA | 3.1 | Must | `B1.3`, `F1.2` | Phase 1 | `COVERED` | Not found in inspected source (FE mocks 2FA) |
+| **FR-AUTH-03** | RBAC across 4 roles with lot-level scoping | 3.1 | Must | `B1.3` | Phase 1 | `COVERED` | Not found in inspected source (`UserParkingLot` unbuilt) |
+| **FR-AUTH-04** | Admin management of internal accounts | 3.1 | Must | `B1.3`, `F1.3` | Phase 1 | `COVERED` | Not found in inspected source (only Admin get profile exists) |
+| **FR-AUTH-05** | Audit log for administrative & operational actions | 3.1 | Must | `B1.3`, `F1.3` | Phase 1 | `COVERED` | Not found in inspected source (`AuditLog` entity unused) |
+| **FR-AUTH-06** | Guest public access without login | 3.1 | Must | `B1.5`, `F1.11`| Phase 1 | `COVERED` | Partially aligned in source (FE has guest view; lacks data) |
+| **FR-AUTH-07** | Manager creates/manages Staff in lot | 3.1 | Must | `B1.3`, `F1.3` | Phase 1 | `COVERED` | Not found in inspected source |
+| **FR-AUTH-08** | Internal account activation via link & forced 2FA | 3.1 | Must | `B1.3`, `F1.2` | Phase 1 | `COVERED` | Not found in inspected source |
+| **FR-LOT-01** | CRUD parking lots (Admin) | 3.2 | Must | `B1.4`, `F1.4` | Phase 1 | `COVERED` | Present in entity only; API not found |
+| **FR-LOT-02** | Configure Zone/Floor/Row and Slots by vehicle type| 3.2 | Must | `B1.4`, `F1.4` | Phase 1 | `COVERED` | Present in entities only; API not found |
+| **FR-LOT-03** | 4 slot states + ZoneCounter tracking for transient| 3.2 | Must | `B1.4` | Phase 1 | `COVERED` | Not found in inspected source (`ZoneCounter` absent) |
+| **FR-LOT-04** | Lot status toggling & maintenance notice | 3.2 | Should | `B1.4`, `F1.4` | Phase 1 | `COVERED` | Not found in inspected source |
+| **FR-LOT-05** | Public lot listing with live occupancy & prices | 3.2 | Must | `B1.5`, `F1.11`| Phase 1 | `COVERED` | Not found in inspected source |
+| **FR-LOT-06** | Configure reservation slot quotas per zone | 3.2 | Should | `B1.4`, `F1.4` | Phase 1 | `COVERED` | Not found in inspected source |
+| **FR-3D-01** | 3D lot rendering from published layout | 3.3 | Must | `B1.5`, `F1.9` | Phase 1 | `COVERED` | Not found in inspected source (Three.js/GLB absent) |
+| **FR-3D-02** | Real-time color updates via WebSocket | 3.3 | Must | `B1.5`, `F1.9` | Phase 1 | `COVERED` | Not found in inspected source (SignalR absent) |
+| **FR-3D-03** | 3D interactions (rotate, pan, zoom, click slot) | 3.3 | Must | `F1.9` | Phase 1 | `COVERED` | Not found in inspected source |
+| **FR-3D-04** | Select empty slot on 3D to initiate booking | 3.3 | Must | `F2.4` | Phase 2 | `COVERED` | Partially aligned in source (FE SVG click mocked) |
+| **FR-3D-05** | 3D Layout Editor (Draft/Publish lifecycle) | 3.3 | Should | `B3.1`, `F3.1` | Phase 3 | `COVERED` | Not found in inspected source |
+| **FR-3D-06** | 2D canvas/SVG fallback + Level of Detail | 3.3 | Should | `F1.10` | Phase 1 | `COVERED` | Partially aligned in source (FE uses 2D SVG grid) |
+| **FR-3D-07** | Parked car marker & pathfinding guidance | 3.3 | Could | `B3.4`, `F3.3` | Phase 3 | `COVERED` | Not found in inspected source |
+| **FR-3D-08** | Public 3D data privacy (no license plates) | 3.3 | Must | `B1.5` | Phase 1 | `COVERED` | Not found in inspected source |
+| **FR-OPS-01** | Check-in flow (ANPR / QR ticket / Barrier open) | 3.4 | Must | `B1.7`, `B2.2`, `F1.7`| Phase 1 / 2 | `COVERED` | Not found in inspected source |
+| **FR-OPS-02** | Check-out flow (ANPR / Exit Window / Payment) | 3.4 | Must | `B1.7`, `B2.2`, `F1.7`| Phase 1 / 2 | `COVERED` | Not found in inspected source |
+| **FR-OPS-03** | Manual check-in/out with mandatory reason | 3.4 | Must | `B1.7`, `F1.7` | Phase 1 | `COVERED` | Not found in inspected source |
+| **FR-OPS-04** | Plate discrepancy verification at gate | 3.4 | Must | `B1.7`, `B2.2`, `F2.1`| Phase 1 / 2 | `COVERED` | Not found in inspected source |
+| **FR-OPS-05** | Lost ticket handling with Maker-Checker approval | 3.4 | Must | `B1.8`, `F1.8` | Phase 1 | `COVERED` | Not found in inspected source |
+| **FR-OPS-07** | Blacklist/Whitelist plate management & alerts | 3.4 | Should | `B2.2`, `F2.7` | Phase 2 | `COVERED` | Present in entity only; API not found |
+| **FR-OPS-08** | Incident recording with photo attachment | 3.4 | Should | `B2.9`, `F2.7` | Phase 2 | `COVERED` | Present in entity only; API not found |
+| **FR-OPS-09** | Edge Service offline gate autonomy & sync | 3.4 | Must | `B2.1`, `F2.1` | Phase 2 | `COVERED` | Not found in inspected source |
+| **FR-PRC-01** | Configure pricing rules by lot/zone/vehicle | 3.5 | Must | `B1.6`, `F1.5` | Phase 1 | `COVERED` | Present in entity only; calculation engine absent |
+| **FR-PRC-02** | Fee models (blocks, hourly, day/night, ceiling) | 3.5 | Must | `B1.6` | Phase 1 | `COVERED` | Not found in inspected source |
+| **FR-PRC-03** | Grace period, overnight fee, Exit Window overdue | 3.5 | Must | `B1.6`, `B2.5` | Phase 1 / 2 | `COVERED` | Not found in inspected source |
+| **FR-PRC-04** | Historical pricing rule versioning | 3.5 | Should | `B1.6`, `F1.5` | Phase 1 | `COVERED` | Present in entity only |
+| **FR-PRC-05** | Dynamic pricing (peak/holiday) & vouchers | 3.5 | Could | `B3.3`, `F3.4` | Phase 3 | `COVERED` | Not found in inspected source |
+| **FR-RSV-01** | Search lots, compare prices, 3D preview | 3.6 | Must | `F2.4` | Phase 2 | `COVERED` | Partially aligned in source (FE has mock search) |
+| **FR-RSV-02** | Slot booking with hold duration & deposit | 3.6 | Must | `B2.3`, `F2.4` | Phase 2 | `COVERED` | Not found in inspected source (deposit unbuilt) |
+| **FR-RSV-03** | Change/Cancel reservation & refund policy | 3.6 | Should | `B2.3`, `F2.4` | Phase 2 | `COVERED` | Not found in inspected source |
+| **FR-RSV-04** | Generate QR reservation check-in code | 3.6 | Should | `B2.3`, `F2.2` | Phase 2 | `COVERED` | Partially aligned in source (FE displays mock QR) |
+| **FR-RSV-05** | Auto-expire hold & charge no-show fee | 3.6 | Should | `B2.3` | Phase 2 | `COVERED` | Not found in inspected source (worker absent) |
+| **FR-RSV-06** | Configure reservation policy (hold, deposit) | 3.6 | Must | `B2.3`, `F2.7` | Phase 2 | `COVERED` | Not found in inspected source |
+| **FR-PAY-01** | Cash collection at POS | 3.7 | Must | `B1.8`, `F1.7` | Phase 1 | `COVERED` | Not found in inspected source |
+| **FR-PAY-02** | Online payment (VNPay, MoMo, VietQR) | 3.7 | Must | `B2.4`, `F2.5` | Phase 2 | `COVERED` | Partially aligned in source (FE mock modal only) |
+| **FR-PAY-03** | Dynamic QR payment at exit for Guest | 3.7 | Must | `B2.4`, `F2.2` | Phase 2 | `COVERED` | Not found in inspected source |
+| **FR-PAY-04** | Refund/adjustment via Maker-Checker | 3.7 | Must | `B1.8`, `F1.8` | Phase 1 | `COVERED` | Not found in inspected source |
+| **FR-PAY-05** | Daily reconciliation with Payment Gateway | 3.7 | Must | `B2.6`, `F2.7` | Phase 2 | `COVERED` | Not found in inspected source |
+| **FR-PAY-06** | Issue digital receipt via Push/SMS/Email | 3.7 | Should | `B2.8`, `F2.5` | Phase 2 | `COVERED` | Not found in inspected source |
+| **FR-PAY-07** | Exit Window countdown & overtime fees | 3.7 | Must | `B2.5`, `F2.5` | Phase 2 | `COVERED` | Partially aligned in source (FE has simulated timer) |
+| **FR-CUS-01** | Manage customer profile and vehicles | 3.8 | Must | `B2.7`, `F2.3` | Phase 2 | `PLANNING SEQUENCING DIFFERENCE` | Static evidence suggests alignment (Built in BE/FE) |
+| **FR-CUS-02** | View parking session history & entry photos | 3.8 | Must | `B2.7`, `F2.6` | Phase 2 | `COVERED` | Not found in inspected source |
+| **FR-CUS-03** | Track live parked vehicle & pre-pay | 3.8 | Should | `B2.7`, `F2.5` | Phase 2 | `COVERED` | Partially aligned in source (FE simulated card) |
+| **FR-RPT-01** | Multi-lot overview dashboard | 3.9 | Must | `B1.10`, `F1.12`| Phase 1 | `COVERED` | Not found in inspected source |
+| **FR-RPT-02** | Revenue reports with multiple filters | 3.9 | Must | `B1.10`, `F1.12`| Phase 1 | `COVERED` | Not found in inspected source |
+| **FR-RPT-03** | Exception reports (overtime, manual barrier) | 3.9 | Should | `B2.9`, `F2.8` | Phase 2 | `COVERED` | Not found in inspected source |
+| **FR-RPT-04** | Export reports to Excel/PDF | 3.9 | Should | `B2.9`, `F2.8` | Phase 2 | `COVERED` | Not found in inspected source |
+| **FR-SYS-01** | Employee management & gate assignment | 3.10 | Must | `B1.9`, `F1.3` | Phase 1 | `COVERED` | Not found in inspected source |
+| **FR-SYS-02** | Global parameters (currency, timezone, exit) | 3.10 | Must | `B1.9`, `F1.6` | Phase 1 | `COVERED` | Not found in inspected source |
+| **FR-SYS-03** | Device catalog & Online/Offline heartbeat | 3.10 | Must | `B1.9`, `B2.9`, `F1.6`| Phase 1 / 2 | `COVERED` | Not found in inspected source |
+| **FR-SYS-04** | Payment gateway keys & webhook configuration | 3.10 | Must | `B2.4`, `F2.7` | Phase 2 | `COVERED` | Not found in inspected source |
+| **FR-SYS-05** | Backup and Disaster Recovery | 3.10 | Must | `B2.10` | Phase 2 | `COVERED` | Not found in inspected source |
+| **FR-SYS-06** | System notifications (Push/SMS/Email) | 3.10 | Should | `B2.8`, `F2.9` | Phase 2 | `COVERED` | Partially aligned in source (MailKit built; Push/SMS absent) |
+
+*Summary*: Out of 61 active Functional Requirements, **59 are COVERED** by planned tasks in their respective phases, and **2 (`FR-AUTH-01`, `FR-CUS-01`) have a PLANNING SEQUENCING DIFFERENCE** because they are scheduled for Phase 2 in the plan but already have implementation presence in the codebase. Zero requirements are completely omitted from the plan.
 
 ---
 
-## 7. Conflicts, Ambiguities, Missing Details, and Risks
+## 4. Verified Use Case Inventory and Traceability
 
-### 7.1 Critical Findings (Severity: High / Critical)
+### 4.1 Use Case Count and Enumeration
+SRS Section 5 specifies **exactly 10 Use Cases (UC-01 to UC-10)**. Former `UC-06` (*Kết ca / Shift checkout*) from v1.2 was dropped, and use cases were renumbered.
 
-#### 1. Plan Phasing Inversion vs. Existing Implementation
-- **Source Evidence**: Implementation Plan Table 3 (`B2.7: Customer API`) and Table 4 (`F2.3: Đăng ký/đăng nhập OTP, hồ sơ, danh sách xe`) place User Registration and Vehicle Profiles in **Phase 2**.
-- **Reality**: The codebase already completed these features in Phase 1 (`UsersController.cs`, `UserProfileService.cs`, `RegisterScreen.jsx`, `UserScreen.jsx`).
-- **Risk**: Following the plan sequentially without accounting for the codebase will waste resources re-planning completed work while ignoring missing Phase 1 MVP prerequisites (Lots, Zones, Slots, Manual Sessions, Pricing).
-- **Required Action**: Formally baseline the existing User/Vehicle implementation into Phase 1 completion records and refocus the immediate backlog on Phase 1 MVP Core operations.
+| UC ID | Use Case Name | Primary Actor | Main Execution Flow Summary | Plan Tasks | Plan Phase |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **UC-01** | Xe vào bãi (Vehicle Entry) | Staff, Guest, User, E3 | Sensor $\rightarrow$ ANPR reads plate $\rightarrow$ Blacklist & reservation check $\rightarrow$ Session created $\rightarrow$ Gate opens | `B1.7`, `B2.2`, `F1.7` | Phase 1 / 2 |
+| **UC-02** | Xe ra bãi (Vehicle Exit) | Staff, Guest, User, E3 | Plate read $\rightarrow$ Photo match $\rightarrow$ Exit Window check $\rightarrow$ Payment verified $\rightarrow$ Gate opens $\rightarrow$ Session closed | `B1.7`, `B2.2`, `F1.7` | Phase 1 / 2 |
+| **UC-03** | Xem sơ đồ bãi 3D (View 3D Layout) | Guest, User | Select lot $\rightarrow$ Load published GLB/JSON $\rightarrow$ Dựng 3D $\rightarrow$ WebSocket delta updates $\rightarrow$ Click slot | `B1.5`, `F1.9` | Phase 1 |
+| **UC-04** | Đặt chỗ trước qua 3D (3D Pre-booking)| User, E1 | Find lot $\rightarrow$ Select slot/time $\rightarrow$ Slot status `Giữ chỗ` $\rightarrow$ Pay deposit $\rightarrow$ Issue QR check-in | `B2.3`, `F2.4` | Phase 2 |
+| **UC-05** | Xử lý mất vé (Lost Ticket Handling) | Staff, Manager | Staff identifies vehicle/driver $\rightarrow$ Computes penalty $\rightarrow$ Manager approves $\rightarrow$ Collect fee $\rightarrow$ Open gate | `B1.8`, `F1.8` | Phase 1 |
+| **UC-06** | Thiết lập bảng giá (Pricing Setup) | Manager | Select lot/zone $\rightarrow$ Configure fee rules $\rightarrow$ Set effective date $\rightarrow$ Save (old price archived) | `B1.6`, `F1.5` | Phase 1 |
+| **UC-07** | Thiết kế Layout 3D (3D Layout Design)| Manager, Admin | Open Layout Editor $\rightarrow$ Place slots/zones $\rightarrow$ Save Draft $\rightarrow$ Preview $\rightarrow$ Publish | `B3.1`, `F3.1` | Phase 3 |
+| **UC-08** | Xem báo cáo chuỗi (Chain Reports) | Admin, Manager | Filter by date/lot $\rightarrow$ Load dashboard $\rightarrow$ Export Excel/PDF | `B1.10`, `F1.12` | Phase 1 |
+| **UC-09** | Tạo tài khoản nhân sự (Staff Creation)| Admin, Manager | Manager enters staff info for lot $\rightarrow$ BE verifies scope $\rightarrow$ Activation link sent $\rightarrow$ Staff sets pwd/2FA | `B1.3`, `F1.3` | Phase 1 |
+| **UC-10** | Hoàn tiền / miễn phí (Refund / Free Exit)| Staff, Manager | Staff/Manager proposes adjustment $\rightarrow$ Different Manager approves $\rightarrow$ New adjusting transaction logged | `B1.8`, `F1.8` | Phase 1 |
 
-#### 2. Ghost Entities from Out-of-Scope Modules in Database Context
-- **Source Evidence**: SRS Section 2.5 explicitly excludes Subscriptions, E-invoices, Wallets, and Shifts.
-- **Reality**: `PmsDbContext.cs` contains 63 scaffolded entities, including `Shift`, `ShiftSchedule`, `Subscription`, `Einvoice`, `Wallet`, and `LoyaltyTransaction`.
-- **Risk**: Database pollution, unnecessary foreign key overhead, and developer confusion regarding which entities are active vs. discarded.
-- **Required Action**: Prune or partition `PmsDbContext` to remove all tables explicitly excluded by SRS v1.3.
-
-#### 3. Unresolved Transient Vehicle Overflow Behavior (SRS Question 4)
-- **Source Evidence**: SRS Open Question 4 asks whether an entry gate should physically block or admit with a warning when transient parking capacity (`ZoneCounter == 0`) is reached.
-- **Risk**: Gate automation in Phase 2 (`B2.2`, `F2.1`) cannot be coded deterministically. A physical car trapped in an entry chute without an automated reject/turnaround mechanism creates street traffic gridlock.
-- **Required Action**: Stakeholders must formally approve gate barrier behavior when `ZoneCounter <= 0`.
-
-#### 4. Deposit & No-Show Fee Formula Ambiguity (SRS Question 3)
-- **Source Evidence**: SRS Open Question 3 leaves reservation deposit amounts and no-show fee structures undecided.
-- **Risk**: Blocks database schema for `ReservationPolicy`, payment gateway intent creation (`B2.4`), and customer booking screens (`F2.4`).
-- **Required Action**: BA/Product Owner must specify whether deposits are fixed VND figures or percentages of anticipated hourly fees.
-
-### 7.2 High and Medium Findings (Severity: Medium / High)
-
-#### 5. Maker-Checker Deadlock on Single-Manager Parking Lots (SRS Question 7)
-- **Source Evidence**: SRS Section 2.3 mandates that the proposer and approver for refunds/lost tickets must be two distinct individuals. Question 7 acknowledges that smaller lots may have only 1 Manager.
-- **Risk**: If a single Manager proposes a legitimate refund or lost ticket waiver, the system deadlocks because no second Manager exists at that lot to approve it.
-- **Required Action**: Establish an escalation policy (e.g., lot-level Manager proposals escalate to System Admin or regional Manager).
-
-#### 6. Missing Offline Duration Limit & Method of Payment (SRS Question 6)
-- **Source Evidence**: SRS Question 6 asks what the maximum acceptable offline duration is for an Edge gate, and whether payment methods other than cash are allowed offline.
-- **Risk**: Stale local blacklists and offline cash reconciliation drift increase vulnerability to fraud if offline periods exceed several days.
-- **Required Action**: Define maximum offline operational tolerance (e.g., 24 hours) after which an alert escalates.
-
-#### 7. Performance Risk of Three.js 3D Engine on Mid-Range Mobile (NFR-3D-01)
-- **Source Evidence**: SRS NFR-3D-01 demands $\ge 30$ FPS for 500-slot lots, while NFR-3D-02 limits initial load to $\le 5$ seconds over 4G networks.
-- **Risk**: Complex WebGL meshes running in mobile WebViews frequently suffer memory throttling and frame drops without aggressive geometry instancing, Draco compression, and early LOD implementation.
-- **Required Action**: Build and benchmark the shared 3D Renderer library (`F1.9`) on actual target mobile hardware in Phase 1 before committing to extensive 3D features.
+*Conclusion*: All 10 Use Cases are fully represented and mapped across the 3 phases of the Implementation Plan.
 
 ---
 
-## 8. Questions Requiring Stakeholder Decisions
+## 5. Verified NFR Inventory and Traceability
 
-The following 8 critical questions must be decided by the Project Manager, System Architect, or Business Analyst before commencing development sprints:
+### 5.1 NFR Count and Breakdown
+SRS Section 6 specifies **exactly 18 Non-Functional Requirements**:
+- 14 General System NFRs (`NFR-01` to `NFR-14`).
+- 4 3D Visualization NFRs (`NFR-3D-01` to `NFR-3D-04`).
+- Total: $14 + 4 = \mathbf{18}$.
 
-| # | Question / Issue | Impacted Components | Proposed Recommendation | Approval Needed By |
-| :- | :--- | :--- | :--- | :--- |
-| **Q1** | **Confirmation of `dbo.Users.Id` Type** | `B1.2`, Database Migrations | **Confirm `nvarchar(450)`** as already established in ASP.NET Identity migrations. Close question immediately. | System Architect |
-| **Q2** | **Transient Ingress when Zone Full** | `B1.7`, `B2.2`, `F2.1`, Edge Gate | **Physical barrier remains closed**; gate LCD displays *"Khu vực đầy chỗ (Full)"*; camera logs rejection event. | Product Owner / Operations |
-| **Q3** | **Reservation Deposit & No-Show Policy** | `B2.3`, `B2.4`, `F2.4`, Billing | **Fixed deposit of 50,000 VND**; no-show forfeits 100% of deposit after 15-minute hold expires. | Business Analyst / Finance |
-| **Q4** | **Exit Window Duration** | `B2.5`, `F2.5`, Check-out | **Confirm default 15 minutes**. Surcharges apply at standard hourly rates for overtime. | Operations Lead |
-| **Q5** | **Maker-Checker Single Manager Resolution** | `B1.3`, `B1.8`, `F1.8`, Approval Workflow | If a lot has only 1 Manager, approval requests automatically **escalate to Admin** role. | Security Lead / BA |
-| **Q6** | **Offline Gate Limitations** | `B2.1`, `F2.1`, Edge Hardware | **Maximum 24 hours offline**. Offline mode permits **cash only**; all online QR/app payments require connectivity. | System Architect / Operations |
-| **Q7** | **Image Retention & Decree 13/2023/ND-CP** | `B2.10`, Blob Storage Pruning | **Retain vehicle capture photos for 90 days**, then permanently delete via scheduled background worker. | Legal / Compliance |
-| **Q8** | **ANPR Verification Confidence Threshold** | `B2.2`, `F2.1`, Gate POS | Set threshold at **85%**. Plates read below 85% confidence force Staff manual confirmation on POS. | Hardware / SA |
+| NFR ID | Category | Specific Constraint / Target | Plan Task(s) | Verification Method |
+| :--- | :--- | :--- | :--- | :--- |
+| **NFR-01** | Performance | Ingress/egress transit $\le 3$ seconds (including online sync) | `B2.5`, `B2.11` | Load test with simulated gate barrier |
+| **NFR-02** | Performance | 12-month dashboard query for 50 lots loads $\le 3$ seconds | `B3.5`, `F3.5` | Database aggregation query benchmarking |
+| **NFR-03** | Scalability | Support $\ge 100$ lots, 10,000 transits/day/lot (horizontal scale) | `B2.11`, `B3.6` | Distributed stress test on API cluster |
+| **NFR-04** | Availability | Cloud uptime $\ge 99.5\%$; gates function offline during WAN outage | `B2.1`, `B2.11` | Physical network disconnection simulation |
+| **NFR-05** | Security | TLS encryption, password hashing, RBAC, 2FA, OWASP Top 10 | `B1.3`, `B2.11` | Security audit & static vulnerability scan |
+| **NFR-06** | Security | Zero credit card data stored; PCI-DSS compliance via gateway | `B2.4` | Gateway tokenization architecture audit |
+| **NFR-07** | Privacy | Image retention limits; compliance with Decree 13/2023/ND-CP | `B2.10` | Automated daily purge job verification |
+| **NFR-08** | Integrity | Financial records immutable; adjustments via new transactions | `B1.8` | Database constraint & transaction audit |
+| **NFR-09** | Reliability | RPO $\le 15$ minutes, RTO $\le 2$ hours | `B2.10` | Database backup & restore drill |
+| **NFR-10** | Usability | POS Staff interface $\le 3$ taps per standard transit | `F1.7`, `F1.13` | Usability stopwatch click-stream test |
+| **NFR-11** | Compatibility | Chrome, Edge, Safari; Android 9+, iOS 15+ | `F2.10` | Cross-browser & device matrix testing |
+| **NFR-12** | Integration | IoT hardware protocols: REST, MQTT, WebSockets, vendor SDKs | `B2.1` | Edge Service protocol integration test |
+| **NFR-13** | Operations | Centralized logging, real-time metrics, CI/CD, OpenAPI contract | `B1.1`, `F1.1` | Pipeline inspection & OpenAPI validation |
+| **NFR-14** | Consistency | Edge sync idempotency key; 1 plate cannot have 2 open sessions| `B1.7`, `B2.1` | Concurrency test with dual-gate entry |
+| **NFR-3D-01** | 3D Performance| $\ge 30$ FPS on mid-range devices with 500 slots (LOD/instancing)| `F1.9`, `F3.2` | Frame rate profiling on target mobile device |
+| **NFR-3D-02** | 3D Load Time | Initial model load $\le 5$ seconds over 4G (GLB $\le 10$ MB, Draco)| `B3.2`, `F3.2` | Network-throttled asset load benchmark |
+| **NFR-3D-03** | 3D Real-time | Slot state & ZoneCounter update on 3D $\le 2$ seconds | `B1.5`, `F1.9` | End-to-end WebSocket latency benchmark |
+| **NFR-3D-04** | 3D Fallback | WebGL 2 requirement with automatic 2D fallback | `F1.10` | Canvas fallback test with WebGL disabled |
 
 ---
 
-## 9. Prioritized Recommendations
+## 6. Corrected `dbo.Users.Id` Investigation
 
-### Phase 1 Course Correction
-1. **Re-align Implementation Plan with Existing Codebase**:
-   - Officially mark User Profile and Vehicle CRUD (`B2.7` / `F2.3`) as **Complete** in the project backlog.
-   - Reallocate Phase 1 sprint priorities immediately to the unbuilt MVP operational core: **Parking Lots, Zones, Slots, ZoneCounter, Manual Sessions, and Pricing Engine**.
-2. **Purge Scaffolded Out-of-Scope Entities**:
-   - Strip out `Shift`, `Subscription`, `Einvoice`, `Wallet`, and `Partner` entities from `PmsDbContext.cs` to align directly with SRS v1.3 Section 2.5.
-3. **Resolve Open Question 1 Formally**:
-   - Issue an architectural memo confirming `dbo.Users.Id` is `nvarchar(450)` to unblock pending database scripts.
-4. **Implement Missing Phase 1 Testing**:
-   - Add integration tests for the existing profile and vehicle endpoints, resolving the dual-database context mismatch in `ApiApplicationFactory`.
+### 6.1 Statement of the Problem
+- **SRS Section 11, Open Question 1**: *"Cột Id của dbo.Users là kiểu gì (int, uniqueidentifier hay nvarchar(450))? Cần biết để tạo khóa ngoại."*
+- **Implementation Plan Section 5 & Table 6**: Declares Open Question 1 as a blocking dependency that blocks item `B1.2` and all subsequent database scripting.
 
-### Phase 2 Preparation
-5. **Freeze Edge Service Interface Contract**:
-   - Publish formal OpenAPI and MQTT JSON schemas for the Edge Service early in Phase 1 to prevent downstream blocking in Phase 2.
-6. **Prototype Three.js Renderer on Real Devices**:
-   - Validate Three.js WebGL performance on target Android and iOS devices before building complex 3D booking flows.
+### 6.2 Codebase Evidence Analysis
+A thorough inspection of the backend source files reveals the exact configuration:
+
+1. **Entity Definition (`src/PMS.DataAccess/Identity/ApplicationUser.cs`)**:
+   ```csharp
+   public class ApplicationUser : IdentityUser
+   {
+       public string Role { get; set; } = "User";
+
+       [NotMapped]
+       public string UserId
+       {
+           get => Id;
+           set => Id = value;
+       }
+   }
+   ```
+   `ApplicationUser` derives from `IdentityUser`. The base `IdentityUser.Id` property is of type C# `string`.
+2. **EF Core Configuration (`src/PMS.DataAccess/Persistence/Configurations/ApplicationUserConfiguration.cs`)**:
+   ```csharp
+   builder.ToTable("Users");
+
+   builder.Property(u => u.Id)
+       .HasColumnName("UserId");
+   ```
+   The entity maps to table `"Users"`, and the primary key property `Id` is explicitly mapped to database column `"UserId"`.
+3. **Migration Specification (`src/PMS.DataAccess/Persistence/Migrations/20261001025913_InitialCreate.cs:28-52`)**:
+   ```csharp
+   migrationBuilder.CreateTable(
+       name: "Users",
+       columns: table => new
+       {
+           UserId = table.Column<string>(type: "nvarchar(450)", nullable: false),
+           ...
+       },
+       constraints: table =>
+       {
+           table.PrimaryKey("PK_Users", x => x.UserId);
+       });
+   ```
+   The column is generated as `nvarchar(450)` and defined as the primary key.
+4. **Foreign Key Usage (`src/PMS.DataAccess/Persistence/AutomatedMigration.cs:72`)**:
+   In the startup raw SQL DDL script for `Customers`, the column is defined as:
+   ```sql
+   [UserId] [nvarchar](450) NULL
+   ```
+   with a non-clustered index `[IX_Customers_UserId]`.
+
+### 6.3 Reconciled Conclusion and Formal Status
+- **Physical Column vs. Property Name**: `dbo.Users.Id` and `dbo.Users.UserId` refer to the **same single physical primary key column**, which in SQL Server is named `UserId`. The name `Id` is the C# property on `IdentityUser`.
+- **Classification**: **Partially resolved; runtime/deployed-schema confirmation remains necessary**.
+- **Rationale**: While the source code (EF Core configurations, migrations, and DDL scripts in `AutomatedMigration.cs`) uniformly specifies the table as `dbo.Users` with PK column `UserId` of type `nvarchar(450)`, the actual *deployed* database schema in any external or production SQL Server instance cannot be definitively verified without runtime database inspection (which is prohibited in this read-only phase). Furthermore, there is a naming discrepancy where the SRS questions reference `dbo.Users.Id` while the physical column generated by EF Core is named `dbo.Users.UserId`.
+
+---
+
+## 7. Implementation Evidence and Compliance Status
+
+To ensure engineering rigor, the table below maps each major functional capability to six explicit levels of evidence:
+1. `Not found in inspected source`
+2. `Present in source`
+3. `Partially aligned with requirements`
+4. `Static evidence suggests alignment`
+5. `Test-verified`
+6. `Runtime-verified`
+
+| Capability / API Surface | Inspected Source Locations | Evidence Level | Alignment & Gaps vs. SRS v1.3 |
+| :--- | :--- | :--- | :--- |
+| **User Registration** | `POST /api/users/register`<br>`RegisterScreen.jsx` | `Partially aligned with requirements` | Creates user and customer, but uses password-only (no OTP per `FR-AUTH-01`). Auto-generates username from email prefix. |
+| **User Authentication** | `POST /api/users/authenticate`<br>`LoginScreen.jsx` | `Partially aligned with requirements` | Authenticates and returns JWT. Searches strictly by `UserName`; rejects email/phone lookup. 2FA is mocked on FE. |
+| **Customer Profile** | `GET/PUT /api/users/profile`<br>`UserScreen.jsx` | `Static evidence suggests alignment` | Profile fields match `UserProfileResponseModel`. Covered by unit tests in `UserProfileServiceTests.cs`. |
+| **Vehicle CRUD** | `GET/POST/PUT/DELETE/PATCH /api/users/profile/vehicles`<br>`UserScreen.jsx` | `Static evidence suggests alignment` | Vehicle creation, plate normalization, default selection, and soft deletion implemented. Unit-tested. Integration tests absent. |
+| **Vehicle Types Catalog** | `GET /api/users/profile/vehicle-types` | `Static evidence suggests alignment` | Returns active vehicle types. Seeded in `AutomatedMigration.cs`. |
+| **Change Password** | `PUT /api/users/profile/change-password` | `Static evidence suggests alignment` | Password change via `UserManager`. Unit-tested in `UserProfileServiceTests.cs`. |
+| **Parking Lots / Zones / Slots** | None (Entities in `PMS.Core` only) | `Not found in inspected source` | Zero controllers or API endpoints exist for lot or slot management (`FR-LOT-01` to `06`). |
+| **ZoneCounter** | None | `Not found in inspected source` | `ZoneCounter` does not exist as an entity or database table in the codebase. |
+| **3D WebGL Rendering** | `UserScreen.jsx` (2D SVG only) | `Not found in inspected source` | Three.js, Babylon.js, WebGL 2, GLB asset loaders, and SignalR streaming hubs are absent. |
+| **Gate Operations / ANPR** | None (Entities in `PMS.Core` only) | `Not found in inspected source` | Zero session ingress/egress endpoints or Edge hardware communication handlers exist. |
+| **Pricing Engine** | None (Entities in `PMS.Core` only) | `Not found in inspected source` | Zero fee calculation algorithms or tariff evaluation services exist (`FR-PRC-01` to `05`). |
+| **Reservations & Booking** | `UserScreen.jsx` (Mock form & SVG) | `Not found in inspected source` | In-memory mock in frontend; zero backend reservation endpoints or deposit policies exist. |
+| **Payments & Check-out** | `UserScreen.jsx` (Mock alert) | `Not found in inspected source` | Zero gateway integrations (VNPay, MoMo, VietQR) exist in backend. |
+| **Reporting & Dashboards** | None | `Not found in inspected source` | Zero reporting controllers, aggregation queries, or export services exist. |
+
+*Crucial Finding*: While User Profile and Vehicle Management have reached `Static evidence suggests alignment`, **core parking operations remain at `Not found in inspected source`**.
+
+---
+
+## 8. In-Scope and Out-of-Scope Findings
+
+### 8.1 Explicitly Out-of-Scope Domains (SRS Section 2.5)
+The SRS explicitly designates the following 7 domains as excluded from the current version:
+1. **Periodic passes**: Weekly, monthly, quarterly, annual, and corporate subscription packages.
+2. **Electronic Invoicing**: Government e-invoice integration; system issues basic payment receipts only.
+3. **Internal Accounts**: Stored-value wallets, Auto-Pay balance deduction, customer loyalty points, reviews, and complaints.
+4. **Multi-Tenancy & Open APIs**: Multi-owner tenant separation, public developer APIs, and partner revenue sharing.
+5. **Shift Operations**: Staff shift assignment, physical cash handover, and shift cash reconciliation.
+6. **Per-Slot Sensors**: Individual ultrasonic or video sensors for transient vehicles.
+7. **AI & External Maps**: Machine learning predictive models and third-party map navigation (Google Maps, Mapbox).
+
+### 8.2 Codebase Residuals vs. Scope Boundaries
+The backend solution contains 63 scaffolded entity files in `src/PMS.Core/Entities/` inherited from legacy `pmsv2.sql`. Several entity clusters directly represent out-of-scope functionality:
+
+| Out-of-Scope Category | Related Entity Classes in `PMS.Core/Entities` | Assessment & Recommended Handling |
+| :--- | :--- | :--- |
+| **Periodic Passes** | `Subscription.cs`, `SubscriptionPlan.cs`, `SubscriptionRenewal.cs` | **Unused scaffolded entities**. Retain in code repository pending formal team decision; do not reference in new code. |
+| **Electronic Invoices** | `Einvoice.cs` | **Unused scaffolded entity**. Retain without active migration. |
+| **Internal Wallets & Loyalty** | `Wallet.cs`, `WalletTransaction.cs`, `LinkedPaymentAccount.cs`, `LoyaltyTransaction.cs` | **Unused scaffolded entities**. Retain without active migration. |
+| **Customer Feedback** | `LotReview.cs`, `CustomerFeedback.cs` | **Unused scaffolded entities**. Retain without active migration. |
+| **Shift Management** | `Shift.cs`, `ShiftSchedule.cs`, `ShiftTemplate.cs`, `ShiftCashCount.cs` | **Deprecated scaffolded entities**. Explicitly discarded in SRS v1.3 Section 2.4. Retain in codebase; do not generate migrations. |
+| **Partner Revenue** | `Partner.cs` | **Unused scaffolded entity**. Retain without active migration. |
+
+### 8.3 Preservation Principle
+**Mandatory Directive**: **Do not delete, modify, or refactor any out-of-scope entity classes or source files.** Deletion would alter the team's shared repository history and could introduce build-break cascades in `PmsDbContext.cs`. Any entity cleanup must remain a deferred architectural proposal requiring team consensus and lead architect approval.
+
+---
+
+## 9. Open Business Questions and Additional Ambiguities
+
+SRS Section 11 records 8 open questions. Below is their validated operational impact and current status:
+
+| # | Question Summary | Document Context | Unresolved Status & Operational Impact |
+| :- | :--- | :--- | :--- |
+| **Q1** | Data type of `dbo.Users.Id` | SRS 11, Plan 6 | **Partially resolved in source code** (`nvarchar(450)`). Live deployed schema requires verification when database access is granted. |
+| **Q2** | Confirmation of 15m Exit Window & 15m Hold time | SRS 2.3, 3.7 | **Unresolved**. If unconfirmed, default timers in `B2.3` and `B2.5` remain open to dispute. |
+| **Q3** | Deposit & No-Show calculation formula | SRS 11, Plan 6 | **Unresolved**. Blocks `ReservationPolicy` schema, reservation API payload, and payment gateway charge intent calculation. |
+| **Q4** | Zone overflow behavior when transient space is full | SRS 11, Plan 6 | **Unresolved / Critical**. Blocks gate entry logic (`FR-OPS-01`). If barrier blocks entry, a physical turnaround lane is needed; if it admits, capacity is breached. |
+| **Q5** | ANPR confidence threshold for manual staff check | SRS 11, Plan 6 | **Unresolved** (suggested 85%). Governs automatic barrier opening vs. mandatory staff verification on POS. |
+| **Q6** | Maximum gate offline duration & accepted payments | SRS 11, Plan 6 | **Unresolved**. Governs offline cache limits, queue size, and cash fraud liability. |
+| **Q7** | Manager multi-lot scope & single-Manager approvals | SRS 11, Plan 6 | **Unresolved / Critical**. Governs Maker-Checker rules (`FR-PAY-04`, `FR-OPS-05`). If a lot has only 1 Manager, approval requests could deadlock without an escalation path. |
+| **Q8** | Image retention duration under Decree 13/2023/ND-CP | SRS 11, Plan 6 | **Unresolved** (suggested 90 days). Governs automated storage cleanup job (`B2.10`). |
+
+### Additional Ambiguities Discovered During Review
+- **A1. Email vs. Username Login Conflict**: `LoginScreen.jsx` labels the field "Username", but users commonly attempt to log in using their email address. `UserService.cs:64` evaluates only `u.UserName == loginUserModel.Username`. A formal decision is needed on whether `LoginAsync` should query `u.UserName == input || u.Email == input`.
+- **A2. Missing `ZoneCounter` Concurrency Pattern**: SRS Section 2.3 mandates `ZoneCounter` updates inside the same transaction as `Session` creation. In high-traffic multi-gate environments, updating a single integer row in SQL Server will cause row-lock contention. The Implementation Plan proposes Redis caching, but the cache-invalidation and write-behind reconciliation strategy is not specified.
+
+---
+
+## 10. Implementation Plan Phase and Effort Review
+
+### 10.1 Effort Number Verification
+The Implementation Plan estimates total effort as:
+- **Backend (BE)**: 288 person-days (`B1.1` to `B3.6`).
+- **Frontend (FE)**: 293 person-days (`F1.1` to `F3.5`).
+- **Combined Total**: $\mathbf{581\text{ person-days}}$ ($\approx 288 + 293$).
+
+### 10.2 Effort Representation and Limitations
+- **Effort vs. Elapsed Time**: The 581 person-days represent raw individual engineering effort. It does **not** represent calendar duration, an approved milestone commitment, or a project schedule.
+- **Sprint Assumptions**: The plan assumes 2-week sprints, but explicitly notes in Section 1 that calendar delivery dates cannot be set until team size and allocation are confirmed.
+- **Excluded Work**: The 581 person-days explicitly **exclude** real-hardware integration (cameras, barriers, ticket printers), automated hardware driver testing, security penetration testing, and user acceptance testing (UAT).
+
+### 10.3 Phase Sequencing Analysis
+- **Plan Assumption**:
+  - Phase 1 (232 person-days): Core MVP operations (Lots, Zones, Slots, Manual Sessions, Pricing, Cash POS, 3D viewer).
+  - Phase 2 (242 person-days): Automation, Edge, Online Payments, and Customer/Vehicle APIs (`B2.7`, `F2.3`).
+  - Phase 3 (107 person-days): Layout Editor 3D, Dynamic Pricing, Optimization.
+- **Codebase Reality**: The development team has completed Phase 2's User/Vehicle profile features while Phase 1's foundational parking operations are unbuilt.
+- **Impact**: This represents an **implementation sequencing divergence**. It does not invalidate Phase 1 or Phase 2, but requires updating project tracking to reflect that customer profile work has been completed ahead of schedule, while core parking operations remain the critical path for Phase 1 MVP acceptance.
+
+---
+
+## 11. Corrections Made to the Previous Report
+
+| Item / Finding | Previous Phase 2 Statement | Validated and Corrected Finding | Rationale / Source Evidence |
+| :--- | :--- | :--- | :--- |
+| **`FR-OPS-06` Numbering Gap** | Stated as an unrenumbered gap without full context. | **Conclusively verified as intentionally removed**. | SRS 2.4 and 3 explicitly state `FR-OPS-06` (Shift management) was removed in v1.3 and IDs were not renumbered to preserve stability. |
+| **Active FR Count** | Claimed 61 FRs without individual inventory. | **Verified as exactly 61 active FRs** with complete 61-row auditable traceability matrix. | Extracted directly from XML tables across all 10 modules. |
+| **`dbo.Users.Id` Resolution** | Stated as fully resolved and unblocked. | **Reclassified as partially resolved in code; runtime confirmation necessary**. | EF Core models `UserId` as `nvarchar(450)`, but physical deployed database schema cannot be proven without runtime inspection. Discrepancy between SRS name `Id` and column name `UserId` documented. |
+| **Implementation Compliance** | Implied features were "Complete" based on code presence. | **Separated into 6 evidence levels**. User/Vehicle features classified as `Static evidence suggests alignment` or `Partially aligned`. | Code presence does not prove runtime correctness or complete SRS compliance. |
+| **Out-of-Scope Entity Handling**| Suggested purging or deleting scaffolded out-of-scope entities. | **Corrected to mandatory preservation**. | Project guidelines forbid deleting team files. Entity cleanup is deferred as a team recommendation only. |
+| **Effort Number Interpretation**| Cited 581 person-days as a project schedule. | **Clarified as raw estimated effort (person-days)**, not calendar duration or an approved delivery schedule. | Plan Section 1 notes calendar dates depend on staffing headcount. |
+
+---
+
+## 12. Remaining Limitations and Required Follow-up Actions
+
+### 12.1 Analytical Limitations
+1. **No Live Database Verification**: Schema conclusions are derived from EF Core configurations and migrations. Live database tables, constraints, and triggers remain uninspected.
+2. **No Hardware Test Environment**: Edge Service, ANPR accuracy, and barrier opening latency ($\le 3$s) cannot be verified until physical or simulated IoT hardware is connected.
+3. **Team Git Metadata Uninspected**: Git branches, remotes, and commit histories of the team repositories remain uninspected in compliance with the absolute Git prohibition.
+
+### 12.2 Required Follow-up Actions (Awaiting Stakeholder Approval)
+1. **Business Clarifications**: Present Open Questions Q2, Q3, Q4, and Q7 to the Project Manager and Business Analyst for formal decisions.
+2. **Backlog Re-alignment**: Re-align project sprint tracking to account for completed User/Vehicle APIs and prioritize unbuilt Phase 1 core parking modules (Lots, Zones, Slots, `ZoneCounter`, Manual Sessions, and Pricing Engine).
+3. **Phase 3 Authorization**: Maintain a strict read-only posture. Do not modify team source code or begin implementation until formal stakeholder approval is granted.
