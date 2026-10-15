@@ -787,3 +787,272 @@ Before integrating these backend branches into `develop`, the following technica
 - **Runtime LocalDB Verification**: **Passed** (Physical SQL Server DDL syntax valid, idempotency verified, unique indexes active, composite uniqueness enforced).
 - **External / Manual Verification**: Pending frontend client integration and multi-user load testing.
 - **Task Status**: `IMPLEMENTATION COMPLETE / AUTOMATED VERIFICATION PASS / RUNTIME VERIFICATION PASS / EXTERNAL VERIFICATION PENDING`.
+
+---
+
+## 13. Implementation Plan ↔ Existing Code Conformance Audit
+
+### 13.1 Audit Objectives, Scope, and Source Document Verification
+
+This section provides an independent, read-only architectural and requirements audit evaluating the degree of conformance between the **original Implementation Plan Word document** (supported by the original SRS v1.3 specification) and the current backend codebase in `C:\DEV\OJT-FSA-Team3\parking-management-system`.
+
+The primary focus is to determine whether internal account management (`Manager` and `Staff`), account activation-by-link workflows, and parking configuration APIs (`ParkingLot`, `Zone`, `Slot`) align with the planned implementation phases, task descriptions, and architectural rules laid out in the project's foundational planning document.
+
+#### 13.1.1 Source-Document Inspection & Accessibility
+Both original Word documents archived in `reports/parking-system/source-documents/` were accessed, parsed, and verified directly:
+1. `Implementation Plan - Hệ thống Quản lý Nhiều Bãi Đỗ Xe.docx`:
+   - **File Size**: 118,372 bytes; **Parsed Length**: 15,041 characters.
+   - **Document Metadata**: Authored October 11, 2026 by `@FrankyMilky`.
+   - **Structure**: Covers Assumptions, Architecture, Backend Plan (Phase 1 MVP, Phase 2 Automation, Phase 3 Optimization; 288 person-days), Frontend Plan (293 person-days), Cross-stream Roadmap, and Open Questions.
+2. `SRS v1.3 – Hệ thống Quản lý Nhiều Bãi Đỗ Xe.docx`:
+   - **File Size**: 137,445 bytes; **Parsed Length**: 28,363 characters.
+   - **Document Metadata**: Authored October 7, 2026 (v1.3 update incorporating two-mode slot design, Maker-Checker, and 4 system roles).
+
+#### 13.1.2 Inspection Baseline
+- **Team Backend Codebase**: `C:\DEV\OJT-FSA-Team3\parking-management-system`.
+- **Audit Posture**: Strictly read-only inspection. Zero production code files, database schemas, or migrations were modified.
+- **Git Restrictions**: In strict compliance with user instructions, **zero Git commands were executed within `C:\DEV\OJT-FSA-Team3` or its subdirectories**.
+
+---
+
+### 13.2 Exact Account-Lifecycle Requirements in the Implementation Plan
+
+A textual and structural audit of the Implementation Plan reveals the following explicit requirements governing internal accounts:
+
+#### 13.2.1 Task B1.3 Specification (Plan Section 3, Table "Phase 1 – MVP", Line 54)
+```
+#    | Hạng mục                                                                                 | FR / UC                      | ng.ngày
+B1.3 | Auth: đăng nhập nội bộ + 2FA, ủy quyền tạo tài khoản (Admin → Manager → Staff),         | FR-AUTH-02–05, 07, 08; UC-09 | 15
+     | kích hoạt bằng link, khóa thay vì xóa, RBAC theo phạm vi bãi, policy Maker-Checker,     |                             | 
+     | Audit Log                                                                               |                             | 
+```
+- **Phase**: Phase 1 — MVP (Target: 1 lot running 1 full day without Zone Counter mismatch; revenues match reports).
+- **Core Capabilities in B1.3**:
+  1. Internal login with Two-Factor Authentication (`2FA`).
+  2. Delegated hierarchical account creation: `Admin` $\to$ `Manager` $\to$ `Staff`.
+  3. **Activation by link** (`kích hoạt bằng link`).
+  4. Soft locking instead of physical deletion (`khóa thay vì xóa`).
+  5. RBAC scoped to parking lot (`RBAC theo phạm vi bãi`).
+  6. Maker-Checker authorization policies.
+  7. Audit logging of administrative actions (`Audit Log`).
+
+#### 13.2.2 Companion Frontend Tasks (Plan Section 4, Table "Phase 1 – MVP")
+- **Task F1.2 (Line 102)**:
+  `F1.2 | Đăng nhập nội bộ + 2FA, kích hoạt bằng link, đổi mật khẩu lần đầu | Web Admin, POS | FR-AUTH-02, 08 | 6 ng.ngày`
+- **Task F1.3 (Line 103)**:
+  `F1.3 | Quản lý tài khoản/nhân viên, gán bãi/cổng, khóa/đặt lại mật khẩu, xem Audit Log | Web Admin | FR-AUTH-04, 05, 07; FR-SYS-01; UC-09 | 10 ng.ngày`
+
+#### 13.2.3 Supporting Architectural and Use Case Rules
+- **Backend Lot Scope Enforcement (Plan Section 2, Line 42)**:
+  *"Phạm vi bãi của Manager/Staff kiểm tra ở Backend qua UserParkingLot, không tin dữ liệu từ form (FR-AUTH-07)."*
+- **SRS Use Case UC-09 (Tạo tài khoản nhân sự)**:
+  *"Nhập thông tin, chọn bãi/cổng (Manager chỉ tạo Staff trong bãi mình) $\to$ backend kiểm tra role và phạm vi $\to$ **gửi link kích hoạt** $\to$ **nhân sự đổi mật khẩu và bật 2FA** $\to$ ghi Audit Log."*
+- **SRS FR-AUTH-08**:
+  *"Tài khoản nội bộ kích hoạt bằng link hoặc mật khẩu tạm, bắt buộc đổi mật khẩu và bật 2FA ở lần đăng nhập đầu; nhân sự nghỉ việc thì khóa, không xóa để giữ liên kết với session và giao dịch cũ."*
+
+---
+
+### 13.3 Critical Audit: Account Activation-by-Link (The 10-Point Lifecycle Checklist)
+
+To evaluate whether the account creation implementation adheres to the Implementation Plan's activation-by-link requirement, the backend source code was traced across each step of the account onboarding lifecycle:
+
+| Lifecycle Step | Implementation Plan & SRS Requirement | Observed Backend Implementation & Code Location | Evaluation & Conformance Finding |
+| :--- | :--- | :--- | :--- |
+| **1. Admin initiates account creation** | Admin creates Manager or Staff; supplies profile and lot scope (`B1.3`, `UC-09`). | Implemented in `AdminController.cs` (`POST /api/admin/managers` and `POST /api/admin/staff`), delegating to `UserService.cs` (`CreateInternalUserCoreAsync`). Client supplies `UserName`, `FullName`, `Email`, `PhoneNumber`, and `Password`. | **Partially Conforming**: Creation endpoints exist, but client supplies the final password in the request body (`CreateEmployeeAccountModel.Password`), which contradicts an activation-link onboarding model. |
+| **2. Confirmation token generation** | Backend generates secure, single-use activation/confirmation token (`B1.3`, `FR-AUTH-08`). | `UserManager.GenerateEmailConfirmationTokenAsync` is **never called** in `UserService.cs`. No custom token generator or token persistence entity exists. | **Violated / Not Implemented**: No token is created or persisted. |
+| **3. Dispatch of activation link via email** | Backend dispatches an activation link containing the token to the user's email (`B1.3`, `UC-09`). | While `IEmailService`, `EmailService` (MailKit/MimeKit), and template `confirmation_email.html` exist in `PMS.Application`, `IEmailService` is **not injected** into `UserService`. No email dispatch is executed during account creation. | **Violated / Not Implemented**: Email dispatch is completely bypassed. |
+| **4. Token validation and consumption** | Backend exposes an endpoint to validate token, check expiry, and prevent reuse (`B1.3`, `F1.2`). | No activation or email confirmation controller or service method exists (no route matching `/api/users/confirmEmail` or `/api/auth/activate`). | **Violated / Not Implemented**: Zero token validation infrastructure exists. |
+| **5. Pre-activation account state** | Account must remain in an inactive / unconfirmed state pending link verification (`B1.3`, `FR-AUTH-08`). | In `UserService.cs:116-117`, the new account is created with: `user.EmailConfirmed = true;` and `user.IsActive = true;`. In `UserService.cs:137`, `employee.Status = "Active";`. | **Direct Violation**: The account is created in a fully confirmed and active state immediately, completely skipping pre-activation state. |
+| **6. User password setup / initial change** | User sets their own permanent password upon following the link (`B1.3`, `F1.2`, `FR-AUTH-08`). | Password is set upfront by Admin at creation time (`CreateEmployeeAccountModel.Password`). No `MustChangePassword` flag exists on `ApplicationUser`. | **Violated / Not Implemented**: Password is created by admin; user is not prompted or forced to change it. |
+| **7. Activation state transition** | Account transitions to `Active` only upon successful link confirmation (`B1.3`, `FR-AUTH-08`). | Account is active from the moment of SQL insertion. No activation transition exists. | **Direct Violation**: Activation is bypassed. |
+| **8. Forced Two-Factor Authentication (2FA)** | Mandatory 2FA enrollment on first login for internal personnel (`B1.3`, `F1.2`, `FR-AUTH-08`, `NFR-05`). | `ApplicationUser.TwoFactorEnabled` exists from ASP.NET Identity, but defaults to `false`. Neither account creation nor `LoginAsync` (`UserService.cs:189`) checks or enforces 2FA. | **Violated / Not Implemented**: Personnel can authenticate using single-factor username/password indefinitely. |
+| **9. Login interception before activation** | Unactivated accounts must be blocked from logging in (`B1.3`, `FR-AUTH-08`). | In `UserService.cs:197`, `LoginAsync` only checks `if (!user.IsActive)`. Because `IsActive` is `true` upon creation, newly created users can log in immediately. | **Direct Violation**: Unactivated accounts can log in immediately. |
+| **10. Audit logging & recovery** | Audit Log must record account creation, role assignment, and status updates (`B1.3`, `FR-AUTH-05`). | `PmsDbContext.AuditLogs` exists in the schema, but is **never written to** during `CreateManagerAsync`, `CreateStaffAsync`, or `UpdateUserStatusAsync`. | **Violated / Not Implemented**: Zero audit logging implemented in account management. |
+
+#### 13.3.1 Critical Observation on Existing Test Suites
+The automated test suite in `tests/PMS.Api.IntegrationTests/Tests/AdminEndpointTests.cs` (lines 172–180) contains:
+```csharp
+// 1. Verify staff can log in initially
+var unauthClient = _factory.CreateUnauthorizedClient();
+var loginResponse = await unauthClient.PostAsync("/api/users/authenticate", new JsonContent(new LoginUserModel
+{
+    Username = username,
+    Password = password
+}));
+loginResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+```
+**Finding**: The existing test suite explicitly verifies and asserts that a newly created staff account **can log in immediately using the Admin-supplied password**. The test suite does not test the documented activation-by-link workflow; rather, it codifies and enforces the bypass.
+
+---
+
+### 13.4 Independent Re-evaluation of Previous Classifications and Task Deferrals
+
+In previous project reports (`phase-3.1-roadmap-review-and-personal-task-shortlist.md`, Sections 11.8 and 12.7), the absence of activation links and 2FA was classified as:
+> *"Activation link workflow and forced 2FA are deferred to Auth Phase B1.3."*
+
+#### 13.4.1 Flaw in the Previous Deferral Rationalization
+An independent audit of the original Implementation Plan reveals that **this classification was erroneous**:
+1. **Task B1.3 is Phase 1 MVP, not a future phase**:
+   Task `B1.3` is titled:
+   *"Auth: đăng nhập nội bộ + 2FA, ủy quyền tạo tài khoản (Admin → Manager → Staff), kích hoạt bằng link, khóa thay vì xóa..."*
+   `B1.3` is estimated at 15 person-days within Phase 1 MVP (Plan Section 3, line 54).
+2. **Account Creation and Activation Link are Part of the Same Task**:
+   The plan does not schedule "Account Creation" in one task and "Activation Links" in another later task. Both capabilities are defined within task `B1.3` itself.
+3. **The Current Implementation Bypasses, Rather Than Defers**:
+   By hardcoding `user.EmailConfirmed = true`, `user.IsActive = true`, and requiring Admin to supply `model.Password`, the current implementation does not leave a deferred hook; it implements an alternative, conflicting workflow that directly violates the activation-by-link requirement.
+
+#### 13.4.2 Root Cause Analysis: Scope Divergence Caused by Team Lead Instruction
+Why was this bypass implemented?
+- In the task assignment prompt for Group A, the Team Lead explicitly instructed:
+  > *"The team has additionally agreed: ... New accounts start Active."*
+  > *"Admin API to create Manager and Staff accounts. ... Status changes must not physically delete account records."*
+- **Conclusion**: The implementation faithfully executed the **Team Lead's explicit instruction** ("New accounts start Active", password in request body). However, that team instruction represents an **explicit Scope Divergence from the original Implementation Plan (Task B1.3) and SRS (FR-AUTH-08)**.
+- **Correction**: The previous report's claim that activation links were "deferred by plan" is corrected. The accurate classification is **Scope Divergence caused by a Team Instruction**.
+
+---
+
+### 13.5 Related Parking Configuration Findings (Tasks B1.2, B1.4, B1.5)
+
+Comparing Group B (Parking Configuration) against Implementation Plan tasks `B1.2`, `B1.4`, and `B1.5` reveals the following findings:
+
+#### 13.5.1 Task B1.4: Parking Domain CRUD & 4 Slot States (Plan Line 55)
+`B1.4 | Parking: CRUD bãi/zone/slot, 4 trạng thái slot, Zone Counter, số slot dành đặt chỗ, bật/tắt bãi | FR-LOT-01–04, 06 | 10 ng.ngày`
+
+1. **Parking Lot CRUD (`FR-LOT-01`, `FR-LOT-04`)**:
+   - `POST /api/lots`, `GET /api/lots`, `GET /api/lots/{id}`, `PUT /api/lots/{id}`, `PATCH /api/lots/{id}/status`, `DELETE /api/lots/{id}`.
+   - Status: **Satisfied — Test-verified**. Full lifecycle, active session deletion guard, and status toggling implemented.
+2. **Zone and Slot CRUD (`FR-LOT-02`)**:
+   - `/api/zones` and `/api/slots` route families.
+   - Status: **Satisfied — Test-verified**. Parent lot/zone validation, composite uniqueness, and occupied slot deletion guards implemented.
+3. **Four Slot States (`FR-LOT-03`)**:
+   - `Available`, `Occupied`, `Reserved`, `Maintenance`.
+   - Status: **Satisfied — Test-verified**. Strictly validated in `SlotService` and database schema.
+4. **`Zone Counter` (`FR-LOT-03`)**:
+   - Plan `B1.2` lists `ZoneCounter` in the schema; Plan `B1.4` lists `Zone Counter` in Parking implementation.
+   - Code Inspection: A search for `ZoneCounter` across `PMS.Core` and `PMS.DataAccess` returns zero results.
+   - Status: **Not found in inspected source**. `ZoneCounter` has not been modeled in EF Core, migration scripts, or service logic.
+5. **Reservation Slot Quota (`FR-LOT-06`)**:
+   - Plan `B1.4` requires *"số slot dành đặt chỗ"* (`FR-LOT-06`).
+   - Code Inspection: `Zone.cs` defines `Capacity` (total capacity) and `LayoutJson`, but contains no `MaxReservationSlots` or `ReservedCapacity` property.
+   - Status: **Not found in inspected source**. Missing from the current `Zone` model.
+
+#### 13.5.2 Task B1.5: Public Parking APIs (Plan Line 56)
+`B1.5 | API công khai: danh sách bãi, giá, số chỗ trống, GET layout3d, GET slots; kênh SignalR slots/stream; rate limit, không trả biển số | FR-LOT-05; FR-AUTH-06; FR-3D-01, 02, 08; UC-03 | 10 ng.ngày`
+
+1. **Public Lot Listing (`GET /api/public/lots`)**:
+   - Allows anonymous access; filters to active, non-deleted lots; omits internal operational fields (`managerUserId`, `partnerId`, `createdBy`).
+   - Status: **Partially satisfied**. The basic public endpoint is implemented, but real-time available slot counts and price rates are not returned.
+   - Deferral Justification: **Deferred by explicit plan dependency**. In the Implementation Plan, live pricing rates depend on the Pricing Engine (`B1.6`), and available transient counts depend on Session ingress/egress tracking (`B1.7`). Basic lot listing without live rates is appropriate for Sprint 1.
+
+#### 13.5.3 Task B1.2 & SRS Section 7: Entity Naming Discrepancy
+- Plan `B1.2` and SRS Section 7 specify an entity named `UserParkingLot` to enforce Manager/Staff lot scoping.
+- Code Inspection: The codebase defines `Employee` (with a `ParkingLotId` foreign key) and `EmployeeAssignment` (with `EmployeeId`, `ParkingLotId`, `GateId`, `IsPrimary`, `EffectiveFrom`, `EffectiveTo`).
+- Status: **Satisfied — Static evidence only (Architectural Substitution)**. The team opted for an HR/personnel domain model (`Employee` + `EmployeeAssignment`) rather than a simple join table `UserParkingLot`. This model is richer and fully capable of enforcing lot scoping once wired into authorization handlers.
+
+---
+
+### 13.6 Requirement-to-Code Conformance Matrix
+
+The following matrix synthesizes the conformance status across all audited requirements, classifying each finding under the required audit taxonomy:
+
+| Req / Task ID | Source Document & Section | Expected Behavior per Source | Current Implementation & Code Location | Conformance Classification |
+| :--- | :--- | :--- | :--- | :--- |
+| **`B1.3` (Accounts)** | Plan Sec. 3, line 54; SRS `FR-AUTH-04` | Admin creates internal Manager/Staff accounts. | Implemented in `AdminController.cs` (`POST /api/admin/managers`, `POST /api/admin/staff`). Backend-generated `QL`/`NV` codes. | **Satisfied — Test-verified** (for Creation API contract) |
+| **`B1.3` (Activation)** | Plan Sec. 3, line 54; SRS `FR-AUTH-08`, `UC-09` | Account created in unactivated state; activation link sent via email; user sets password. | Admin sends password in body; `IsActive = true`, `EmailConfirmed = true` set immediately. No email sent. | **Scope divergence caused by a team instruction** |
+| **`B1.3` (2FA)** | Plan Sec. 3, line 54; SRS `FR-AUTH-02`, `08`, `NFR-05` | Internal personnel must configure and use 2FA on first login. | `TwoFactorEnabled` is `false`. Login is single-factor username/password. | **Not satisfied** |
+| **`B1.3` (Soft Lock)** | Plan Sec. 3, line 54; SRS `FR-AUTH-08` | Resigned personnel locked, not deleted, preserving transaction references. | `PATCH /api/admin/users/{id}/status` sets `IsActive = false`, `Employee.Status = 'Inactive'`. Login blocked. | **Satisfied — Test-verified** |
+| **`B1.3` (Lot Scope)** | Plan Sec. 2, line 42; SRS `FR-AUTH-07` | Manager creates Staff scoped to assigned lot; backend checks lot boundary. | Account creation centralized under Admin only. Manager rejected with 403 Forbidden. | **Scope divergence caused by a team instruction** |
+| **`B1.3` (Audit Log)** | Plan Sec. 3, line 54; SRS `FR-AUTH-05` | Audit Log records creation, modification, status locking. | `AuditLogs` DbSet exists in `PmsDbContext`, but is never written to during account or lot actions. | **Not found in inspected source** |
+| **`B1.4` (Lot CRUD)** | Plan Sec. 3, line 55; SRS `FR-LOT-01` | CRUD parking lots with name, GPS, hours, capacity, images. | Implemented in `LotsController.cs` (`/api/lots`). Validated capacity, hours, unique code. | **Satisfied — Test-verified** |
+| **`B1.4` (Lot Status)** | Plan Sec. 3, line 55; SRS `FR-LOT-04` | Toggle lot status, maintenance notices, temporary closure. | Implemented in `LotsController.cs` (`PATCH /api/lots/{id}/status`). | **Satisfied — Test-verified** |
+| **`B1.4` (Zone CRUD)** | Plan Sec. 3, line 55; SRS `FR-LOT-02` | Setup Zone/Floor/Row and slot layouts. | Implemented in `ZonesController.cs` (`/api/zones`). Composite uniqueness enforced. | **Satisfied — Test-verified** |
+| **`B1.4` (Slot CRUD)** | Plan Sec. 3, line 55; SRS `FR-LOT-02` | Slot configuration by vehicle type. | Implemented in `SlotsController.cs` (`/api/slots`). Foreign keys to Zone & VehicleType enforced. | **Satisfied — Test-verified** |
+| **`B1.4` (Slot States)** | Plan Sec. 3, line 55; SRS `FR-LOT-03` | 4 slot states: Available, Reserved, Occupied, Maintenance. | Validated in `SlotService.AllowedStatuses`. Occupied deletion guards active. | **Satisfied — Test-verified** |
+| **`B1.4` (ZoneCounter)** | Plan Sec. 3, line 55; SRS `FR-LOT-03` | Track real-time count of transient vehicles by zone. | No `ZoneCounter` entity, table, or service logic exists. | **Not found in inspected source** |
+| **`B1.4` (Res. Quota)** | Plan Sec. 3, line 55; SRS `FR-LOT-06` | Configure max reservation slots per zone. | `Zone` entity only has `Capacity`. No reservation quota field exists. | **Not found in inspected source** |
+| **`B1.5` (Public Lots)** | Plan Sec. 3, line 56; SRS `FR-LOT-05` | Public listing of lots with real-time occupancy and prices. | `GET /api/public/lots` returns sanitized active lots. Real-time rates omitted. | **Deferred by explicit plan dependency** (Depends on `B1.6` & `B1.7`) |
+
+---
+
+### 13.7 Explicit Conflicts, Architectural Gaps, and Unresolved Decisions
+
+The audit highlights three distinct conflicts that require team lead adjudication:
+
+#### Conflict 1: Account Activation Workflow (`B1.3` / `FR-AUTH-08` vs. Team Lead Instruction)
+- **Source Document Requirement**: Implementation Plan `B1.3` and SRS `FR-AUTH-08` explicitly define an activation-by-link flow: accounts start unactivated, an activation link with a cryptographic token is emailed, the user sets their password upon following the link, and 2FA enrollment is mandatory on first login.
+- **Team Lead Instruction**: In the personal task assignment, the Team Lead instructed that new accounts start `Active`, with a plain password accepted in the creation body.
+- **Current Code Reality**: Follows the Team Lead's instruction. The account is instantly active and single-factor login is immediately available.
+- **Impact**: Fulfills the team lead's current task acceptance criteria, but directly violates the official Implementation Plan Phase 1 MVP criteria and introduces security risks (admin knows user password; no email verification; no 2FA).
+
+#### Conflict 2: Delegated Staff Management (`B1.3` / `FR-AUTH-07` vs. Centralized Admin Creation)
+- **Source Document Requirement**: SRS `FR-AUTH-07` and Plan `B1.3` mandate that a Lot Manager creates and manages Staff accounts within their assigned lot.
+- **Team Lead Instruction**: Centralized internal account creation under `Admin` only.
+- **Current Code Reality**: `POST /api/admin/staff` is `[Authorize(Roles = "Admin")]`. Managers receive `403 Forbidden`.
+- **Impact**: Cleanly bounds initial Sprint 1 implementation, but leaves delegated lot management unimplemented for Phase 1 MVP completion.
+
+#### Conflict 3: Absence of Audit Logging (`B1.3` / `FR-AUTH-05`)
+- **Source Document Requirement**: Plan `B1.3` and SRS `FR-AUTH-05` require recording Audit Logs for all account creation, status toggles, and role assignments.
+- **Current Code Reality**: `PmsDbContext.AuditLogs` table exists, but neither `UserService` nor `AdminController` writes audit records.
+- **Impact**: Lack of administrative traceability.
+
+---
+
+### 13.8 Acceptance Impact and Recommended Next Steps
+
+#### 13.8.1 Task Completion & Merge Assessment
+- **Can the current feature branch be integrated into `develop`?**
+  **YES, with documented caveats**.
+  The backend implementation completely satisfies the Team Lead's agreed task shortlist (`TASK-LOT-01` and `TASK-AUTH-SEC`). All 196 automated tests pass, and isolated LocalDB runtime tests prove schema and constraint integrity. The bypass of activation links was not an accidental developer oversight, but a direct execution of the Team Lead's instruction ("New accounts start Active").
+- **Can Phase 1 MVP Task B1.3 be declared complete?**
+  **NO**.
+  Task `B1.3` in the Implementation Plan cannot be signed off as complete until:
+  1. The activation-by-link workflow is implemented.
+  2. Forced 2FA enrollment is enforced for internal roles.
+  3. Administrative actions write to `AuditLogs`.
+
+#### 13.8.2 Actionable Recommendations for Team Lead & Sprint 2 Backlog
+1. **Formalize Sprint 1 Decision**:
+   Document in the team backlog that the direct password / immediate active state is an intentional **Sprint 1 Mock/Stub Phase** designed to unblock Web Admin frontend development (`F1.3`) and integration testing.
+2. **Schedule Activation-by-Link Implementation**:
+   Implement the complete activation workflow in Sprint 2 as a dedicated task:
+   - Modify `CreateEmployeeAccountModel`: Remove `Password`.
+   - In `UserService.CreateInternalUserCoreAsync`: Set `user.IsActive = false`, `user.EmailConfirmed = false`, generate token via `userManager.GenerateEmailConfirmationTokenAsync(user)`.
+   - Wire `IEmailService`: Dispatch activation email using `confirmation_email.html` with a link to Web Admin (e.g. `https://admin.parkingsystem.com/activate?userId={id}&token={token}`).
+   - Create Activation Endpoint: `POST /api/auth/activate` accepting `userId`, `token`, and `newPassword`. Sets password via `userManager.ResetPasswordAsync`, marks `EmailConfirmed = true`, `IsActive = true`, and prompts for 2FA secret generation.
+3. **Model `ZoneCounter` and `ReservationQuota` in EF Core**:
+   - Add `dbo.ZoneCounters` entity to track transient vehicle occupancy per zone (`B1.2`, `B1.4`).
+   - Add `MaxReservationSlots` (int) to `Zone.cs` to satisfy `FR-LOT-06` before opening the Reservation module (`B2.3`).
+4. **Implement Audit Trail Interceptor**:
+   - Implement an automated EF Core SaveChanges interceptor or service call to populate `AuditLogs` on administrative mutations.
+
+---
+
+### 13.9 Summary of Audited Files and Evidence References
+
+| File Path | Component | Audited Elements & Observations |
+| :--- | :--- | :--- |
+| `src/PMS.API/Controllers/AdminController.cs` | Controller | Routes `/api/admin/managers`, `/staff`, `/users`, `/users/{id}/status`. Protected by `[Authorize(Roles = "Admin")]`. |
+| `src/PMS.Application/Services/Impl/UserService.cs` | Application Service | Lines 110–143: Hardcodes `EmailConfirmed = true`, `IsActive = true`, `Status = "Active"`. Lines 189–210: Login checks `!user.IsActive`, but newly created users pass. `IEmailService` not injected. |
+| `src/PMS.Application/Models/Admin/CreateEmployeeAccountModel.cs` | Request Model | Accepts `Password` directly from Admin; contains no role or employee code override fields. |
+| `src/PMS.Application/Services/IEmailService.cs` & `Impl/EmailService.cs` | Email Infrastructure | Implemented using MailKit/MimeKit; functional but disconnected from user registration and employee creation. |
+| `src/PMS.Application/Templates/confirmation_email.html` | Email Template | Exists in repository, references `api/users/confirmEmail`, but unreferenced by any C# service. |
+| `src/PMS.Core/Entities/ApplicationUser.cs` | Identity Entity | Inherits IdentityUser; contains `IsActive` (bool) and `TwoFactorEnabled` (bool, default false). |
+| `src/PMS.Core/Entities/Employee.cs` | Domain Entity | Contains `EmployeeCode`, `Position`, `Status` ("Active"/"Inactive"), `ParkingLotId`. |
+| `src/PMS.Core/Entities/EmployeeAssignment.cs` | Domain Entity | Contains `EmployeeId`, `ParkingLotId`, `GateId`, `IsPrimary`. Serves as substitution for `UserParkingLot`. |
+| `src/PMS.Core/Entities/Zone.cs` | Domain Entity | Contains `Capacity`, `LayoutJson`, `FloorNo`. Lacks `ZoneCounter` relation and `MaxReservationSlots`. |
+| `src/PMS.API/Controllers/LotsController.cs` | Controller | Full CRUD for lots; `GET /api/public/lots` allows anonymous access and sanitizes internal fields. |
+| `src/PMS.Application/Services/Impl/ParkingLotService.cs` | Service | Enforces active session deletion guard (`ParkingSessions.Status == "Active"`). |
+| `src/PMS.Application/Services/Impl/ZoneService.cs` | Service | Enforces occupied slot deletion guard; validates parent lot existence and active status. |
+| `src/PMS.Application/Services/Impl/SlotService.cs` | Service | Enforces 4 allowed slot states (`Available`, `Occupied`, `Reserved`, `Maintenance`); occupied deletion guard. |
+| `tests/PMS.Api.IntegrationTests/Tests/AdminEndpointTests.cs` | Integration Test | Verifies that staff can log in immediately upon creation using admin-supplied password. |
+| `tests/PMS.Api.IntegrationTests/Tests/ParkingConfigurationConformanceTests.cs` | Integration Test | Verifies full 18-route RBAC matrix, composite uniqueness, and relational integrity guards. |
+
+---
+
+### 13.10 Final Audit Status
+
+- **Audit Status**: **Complete**.
+- **Implementation Status against Team Lead Scope**: **Complete & Verified** (196/196 tests passing).
+- **Implementation Status against Implementation Plan Task B1.3**: **Non-Conformant (Scope Divergence)** — Account creation API is functional and test-verified, but activation-by-link, forced 2FA, and audit logging were bypassed per team lead instruction and remain outstanding for complete Phase 1 MVP sign-off.
+- **Implementation Status against Implementation Plan Task B1.4**: **Partially Conforming** — Lot, Zone, and Slot CRUD and 4 slot states are satisfied and verified; `ZoneCounter` and reservation quota properties are missing from the inspected source.
+- **Reporting Status**: Appended to `reports/parking-system/phase-3.1-roadmap-review-and-personal-task-shortlist.md`.
