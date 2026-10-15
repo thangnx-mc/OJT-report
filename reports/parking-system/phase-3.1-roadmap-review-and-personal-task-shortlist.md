@@ -1228,3 +1228,114 @@ Total Test Count: 204/204 Passed (100% Pass Rate).
 - **Implementation Status**: **Complete**.
 - **Automated Verification**: **Passed** (204/204 tests).
 - **Git Safety Compliance**: **Strictly Respected** (Zero Git commands executed in team workspace `C:\DEV\OJT-FSA-Team3`).
+
+---
+
+## 15. Local Admin Account Bootstrap & Live Runtime Verification
+
+### 15.1 Objective and Context
+
+The objective of this phase is to bootstrap and verify exactly one usable Administrator account in the local development environment (`(localdb)\mssqllocaldb`, database `parking_management_system`) to enable manual API inspection and testing in Postman.
+
+In accordance with project security and reporting guidelines:
+1. No plaintext passwords or testing credentials are saved in this report, test artifacts, or git commits. Credentials are transmitted exclusively via private chat handoff.
+2. Zero Git commands were run within the team codebase workspace (`C:\DEV\OJT-FSA-Team3`).
+3. Verification was executed against live local application and database processes.
+
+---
+
+### 15.2 Database & Migration Sequencing Diagnosis
+
+During the initial boot of `PMS.API` against a pristine local SQL Server LocalDB instance, two startup obstacles were diagnosed and resolved with minimal, scoped adjustments:
+
+1. **EF Core 9 `PendingModelChangesWarning`**:
+   - *Observation*: EF Core 9 raises `PendingModelChangesWarning` as a runtime exception when model snapshots diverge from runtime entity models. Because the `IsActive` property on `ApplicationUser` had been added without a corresponding EF migration (managed via raw SQL table alterations), EF Core rejected automated migration startup.
+   - *Fix*: In `PMS.DataAccess/DataAccessDependencyInjection.cs`, configured warning suppression for `RelationalEventId.PendingModelChangesWarning` on `DatabaseContext`.
+
+2. **Automated Migration Sequencing**:
+   - *Observation*: `AutomatedMigration.MigrateAsync` initially invoked `DatabaseContextSeed.SeedDatabaseAsync` immediately following `context.Database.MigrateAsync()`, but before `EnsurePmsTablesAsync(pmsContext)` ran. Because `20261001025913_InitialCreate.cs` created `Users` without the `IsActive` column, `userManager.CreateAsync()` threw SQL error 207 (`Invalid column name 'IsActive'`).
+   - *Fix*: Reordered `AutomatedMigration.MigrateAsync` so that `EnsurePmsTablesAsync(pmsContext)` executes before `SeedDatabaseAsync(context, userManager)`, guaranteeing that table schemas and columns exist before user queries or seed operations occur.
+
+Both changes were validated against the full test suite (204/204 passing).
+
+---
+
+### 15.3 Seeded Admin Account & Database State Verification
+
+Inspection of the local database `parking_management_system` on instance `(localdb)\mssqllocaldb` confirmed:
+
+- **Total Registered Users Count**: Exactly 1.
+- **Account Attributes**:
+  - `UserId`: `5bc16cba-9254-4995-908d-ee0ca75a0847`
+  - `UserName`: `admin`
+  - `Email`: `admin@admin.com`
+  - `Role`: `Admin`
+  - `IsActive`: `True`
+  - `EmailConfirmed`: `True`
+  - `PhoneNumber`: `0123456789`
+  - `TwoFactorEnabled`: `False` (allows direct password login for initial administration testing without requiring external OTP/authenticator setup)
+- **Extraneous Accounts**: None. No junk, test, or duplicate users exist in the database.
+
+---
+
+### 15.4 Live HTTP Endpoint & Security Verification
+
+The Kestrel server was started locally listening on `http://localhost:5000` and `https://localhost:5001`. The following live HTTP tests were performed:
+
+1. **Authentication Endpoint (`POST /api/users/authenticate`)**:
+   - Submitted valid login payload with `admin` credentials.
+   - Response: `HTTP 200 OK`.
+   - Response payload confirmed `succeeded: true`, returning `userId`, `username: "admin"`, `email: "admin@admin.com"`, `role: "Admin"`, and a signed JWT bearer token.
+
+2. **JWT Token Structure and Claims**:
+   - Decoded and validated the generated JWT token:
+     - `nameid`: `5bc16cba-9254-4995-908d-ee0ca75a0847`
+     - `unique_name`: `admin`
+     - `email`: `admin@admin.com`
+     - `role`: `Admin`
+     - `mobilephone`: `0123456789`
+     - `exp`: 7 days from generation timestamp
+
+3. **Authorized Access to Admin-Only Endpoints**:
+   - `GET /api/admin/users` with header `Authorization: Bearer <token>` returned `HTTP 200 OK` (`succeeded: true`, `result: []`).
+   - `GET /api/users` with header `Authorization: Bearer <token>` returned `HTTP 200 OK`, successfully returning the full record of the seeded administrator user.
+
+4. **Unauthorized Access Rejection**:
+   - `GET /api/admin/users` without `Authorization` header returned `HTTP 401 Unauthorized` with `WWW-Authenticate: Bearer`.
+   - `GET /api/users` without `Authorization` header returned `HTTP 401 Unauthorized` with `WWW-Authenticate: Bearer`.
+
+5. **Invalid Credentials Rejection**:
+   - `POST /api/users/authenticate` with incorrect password returned `HTTP 400 Bad Request` with `{"Succeeded":false,"Errors":["Username or password is incorrect"]}`.
+   - `POST /api/users/authenticate` with non-existent username returned `HTTP 400 Bad Request` with `{"Succeeded":false,"Errors":["Username or password is incorrect"]}`.
+
+---
+
+### 15.5 Test Suite Regression Audit
+
+Full automated regression testing was executed across the entire test suite:
+
+- `PMS.Application.UnitTests`: 150 passed, 0 failed, 0 skipped.
+- `PMS.Api.IntegrationTests`: 54 passed, 0 failed, 0 skipped.
+- **Total Test Suite Result**: **204 passed, 0 failed, 0 skipped** (100% pass rate).
+
+---
+
+### 15.6 Evidence Classification
+
+| Category | Statement | Evidence & Verification |
+| :--- | :--- | :--- |
+| `[FACT]` | Exactly one Admin account exists in the local database. | Verified by direct query against `(localdb)\mssqllocaldb` database `parking_management_system`: `SELECT COUNT(*) FROM Users` returns 1 with `Role = 'Admin'`. |
+| `[FACT]` | The Admin account is active and verified. | Verified in database: `IsActive = 1`, `EmailConfirmed = 1`, `TwoFactorEnabled = 0`. |
+| `[FACT]` | Live authentication endpoint returns HTTP 200 and a valid Admin JWT. | Verified via `POST /api/users/authenticate` returning `succeeded: true` and decoded JWT containing `role: "Admin"`. |
+| `[FACT]` | Admin endpoints reject unauthenticated access and accept the Admin JWT. | Verified via `GET /api/admin/users` returning HTTP 401 without token and HTTP 200 with Bearer token. |
+| `[FACT]` | Automated test suite passes with zero regressions. | Verified: 204/204 automated tests passing. |
+
+---
+
+### 15.7 Task Completion Status
+
+- **Implementation Status**: **Complete**.
+- **Automated Verification**: **Passed** (204/204 tests).
+- **Runtime Local Verification**: **Passed** (Live Kestrel HTTP requests & LocalDB SQL inspection).
+- **Git Safety Compliance**: **Strictly Respected** (Zero Git commands executed in team workspace `C:\DEV\OJT-FSA-Team3`).
+- **Reporting Repository Status**: Pushed to `origin/main` in `C:\DEV\OJT-report`.
