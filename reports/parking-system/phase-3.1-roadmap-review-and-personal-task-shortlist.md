@@ -1339,3 +1339,270 @@ Full automated regression testing was executed across the entire test suite:
 - **Runtime Local Verification**: **Passed** (Live Kestrel HTTP requests & LocalDB SQL inspection).
 - **Git Safety Compliance**: **Strictly Respected** (Zero Git commands executed in team workspace `C:\DEV\OJT-FSA-Team3`).
 - **Reporting Repository Status**: Pushed to `origin/main` in `C:\DEV\OJT-report`.
+
+---
+
+## 16. Implementation & Live Verification of Email OTP Two-Factor Authentication (2FA)
+
+### 16.1 Context and Technical Approach
+
+In accordance with SRS requirements `FR-AUTH-02` (internal staff login + 2FA), `FR-AUTH-08` (forced 2FA for internal accounts), and Implementation Plan Task `B1.3`, a complete email-based OTP Two-Factor Authentication (2FA) mechanism was implemented and verified in the Parking Management System backend.
+
+#### Architectural Principles:
+1. **Email OTP Mechanism**: 6-digit numeric OTP generated via cryptographically secure random number generation and dispatched to the user's verified email address via `IEmailService`.
+2. **Backward Compatibility & Account Scoping**:
+   - Accounts with `TwoFactorEnabled == false` (such as default external customers or developer local admin accounts) authenticate directly with username/password and receive an access JWT.
+   - Accounts with `TwoFactorEnabled == true` (mandatory for internal Manager/Staff accounts activated via link and any user enabling 2FA) are strictly challenged. **No access JWT or refresh token is issued at password verification.**
+3. **Challenge-Bound Token Architecture**:
+   - The password verification step issues a signed HMAC-SHA256 challenge token (`TwoFactorToken`) embedding the `UserId`, `OtpId`, and purpose (`2FA_Challenge`), with a 5-minute lifetime.
+   - The server does not trust client-supplied user identifiers alone during OTP verification.
+   - Replay attacks are prohibited: the OTP record is marked consumed (`ConsumedAt`) immediately upon successful verification.
+
+---
+
+### 16.2 OTP Security & Database Architecture
+
+#### Database Persistence (`dbo.OtpCodes`)
+Persistence is managed via `PmsDbContext.OtpCodes` (`PMS.Core.Entities.OtpCode`) and automatically created in `AutomatedMigration.EnsurePmsTablesAsync`:
+
+```sql
+IF OBJECT_ID('dbo.OtpCodes', 'U') IS NULL
+BEGIN
+    CREATE TABLE [dbo].[OtpCodes](
+        [Id] [bigint] IDENTITY(1,1) NOT NULL PRIMARY KEY,
+        [UserId] [nvarchar](450) NULL,
+        [Destination] [nvarchar](256) NOT NULL,
+        [Channel] [varchar](10) NOT NULL,
+        [Purpose] [varchar](30) NOT NULL,
+        [CodeHash] [nvarchar](200) NOT NULL,
+        [AttemptCount] [int] NOT NULL DEFAULT 0,
+        [ExpiresAt] [datetime2](3) NOT NULL,
+        [ConsumedAt] [datetime2](3) NULL,
+        [CreatedAt] [datetime2](3) NOT NULL DEFAULT (sysutcdatetime())
+    );
+    CREATE NONCLUSTERED INDEX [IX_OtpCodes_Destination_Purpose] ON [dbo].[OtpCodes]([Destination] ASC, [Purpose] ASC);
+    CREATE NONCLUSTERED INDEX [IX_OtpCodes_UserId_Purpose] ON [dbo].[OtpCodes]([UserId] ASC, [Purpose] ASC);
+END
+```
+
+#### Security Controls Enforced:
+1. **Cryptographic Random Generation**: `RandomNumberGenerator.GetInt32(100000, 1000000)` produces uniform 6-digit integers.
+2. **Salted Hash Storage**: Raw OTPs are never stored or logged. Hashes are computed via SHA-256 combining server secret key, destination email salt, and OTP: `SHA256(SecretKey:Destination:Code)`.
+3. **Expiration Window**: Strict 5-minute lifespan (`ExpiresAt = DateTime.UtcNow.AddMinutes(5)`).
+4. **Single-Use Verification**: Successful verification sets `ConsumedAt = DateTime.UtcNow`. Replaying the same code or challenge token returns HTTP 400 Bad Request (`"This verification code has already been used"`).
+5. **Brute-Force Lockout**: Maximum 5 attempts allowed per OTP challenge. Each failed attempt increments `AttemptCount` and communicates remaining attempts. On the 5th failed attempt, the OTP is permanently invalidated.
+6. **Rate Limiting & Cooldown**: A 60-second cooldown is enforced on resend requests for the same destination. Submitting within 60s returns HTTP 400 Bad Request with remaining wait seconds.
+7. **Safe Failure Handling**: If `IEmailService.SendEmailAsync` throws an exception (e.g. SMTP connectivity failure), the generated OTP is immediately invalidated (`ConsumedAt = DateTime.UtcNow`), and no access token is issued.
+8. **Information Leakage Prevention**: Returned email destinations are masked (e.g. `m***a@relaypark.vn`). Public request endpoints return generic neutral messages to prevent user enumeration.
+
+---
+
+### 16.3 Frontend-Ready API Contract
+
+#### Flow Sequence:
+```
+Frontend                        Backend
+   │                               │
+   ├─ POST /api/users/authenticate ─► (1. Verify username/password & active status)
+   │  { username, password }       │  (2. Check TwoFactorEnabled == true)
+   │                               │  (3. Generate & hash 6-digit OTP, save to DB)
+   │                               │  (4. Send OTP email via IEmailService)
+   │◄─ 200 OK ─────────────────────┤  (5. Return challenge token; NO JWT issued)
+   │  { requiresTwoFactor: true,   │
+   │    twoFactorToken: "...",     │
+   │    destination: "a***@..." }  │
+   │                               │
+   │  (User inputs 6-digit code)   │
+   │                               │
+   ├─ POST /api/users/two-factor ──► (6. Validate challenge token signature & expiry)
+   │  { twoFactorToken, code }     │  (7. Verify OTP hash, attempts < 5, unconsumed)
+   │                               │  (8. Mark OTP consumed)
+   │◄─ 200 OK ─────────────────────┤  (9. Issue full access JWT)
+   │  { token: "eyJ...",           │
+   │    requiresTwoFactor: false } │
+   ▼                               ▼
+(Store token in localStorage, user is authenticated)
+```
+
+#### Endpoint 1: Initiate Password Login
+- **URL**: `POST /api/users/authenticate`
+- **Auth**: None (`[AllowAnonymous]`)
+- **Request Body**:
+  ```json
+  {
+    "username": "staff_member",
+    "password": "Password.1!"
+  }
+  ```
+  *(Note: Field `email` is also accepted in place of `username`).*
+
+- **Response A — 2FA Required (TwoFactorEnabled = true)**:
+  - **Status**: `200 OK`
+  - **Body**:
+    ```json
+    {
+      "succeeded": true,
+      "result": {
+        "userId": "73b65596-ebb2-48a7-840e-2f3caffef72a",
+        "username": "staff_member",
+        "email": "staff@relaypark.vn",
+        "phoneNumber": "0912345678",
+        "role": "Staff",
+        "token": null,
+        "requiresTwoFactor": true,
+        "twoFactorToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+        "destination": "s***r@relaypark.vn"
+      },
+      "errors": []
+    }
+    ```
+    > [!IMPORTANT]
+    > Frontend rule: If `requiresTwoFactor == true`, `token` is `null`. The frontend must **not** consider the user logged in. Frontend must transition to the OTP input screen and retain `twoFactorToken` in component state.
+
+- **Response B — Standard Direct Login (TwoFactorEnabled = false)**:
+  - **Status**: `200 OK`
+  - **Body**:
+    ```json
+    {
+      "succeeded": true,
+      "result": {
+        "userId": "5bc16cba-9254-4995-908d-ee0ca75a0847",
+        "username": "admin",
+        "email": "admin@admin.com",
+        "phoneNumber": "0123456789",
+        "role": "Admin",
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+        "requiresTwoFactor": false,
+        "twoFactorToken": null,
+        "destination": null
+      },
+      "errors": []
+    }
+    ```
+
+#### Endpoint 2: Verify OTP & Issue Token
+- **URL**: `POST /api/users/two-factor` *(Alias supported: `POST /api/users/login-otp/verify`)*
+- **Auth**: None (`[AllowAnonymous]`)
+- **Request Body**:
+  ```json
+  {
+    "twoFactorToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "code": "795319"
+  }
+  ```
+- **Response Success**:
+  - **Status**: `200 OK`
+  - **Body**:
+    ```json
+    {
+      "succeeded": true,
+      "result": {
+        "userId": "73b65596-ebb2-48a7-840e-2f3caffef72a",
+        "username": "staff_member",
+        "email": "staff@relaypark.vn",
+        "phoneNumber": "0912345678",
+        "role": "Staff",
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJuYW1laWQiOiI3...",
+        "requiresTwoFactor": false,
+        "twoFactorToken": null,
+        "destination": null
+      },
+      "errors": []
+    }
+    ```
+    > [!TIP]
+    > Frontend rule: Store `result.token` in `localStorage`/`sessionStorage` as `pms_token`. The user is now authenticated.
+
+- **Response Errors**:
+  - Invalid Code: `400 Bad Request` `{"succeeded":false,"result":null,"errors":["Invalid verification code. 4 attempts remaining."]}`
+  - Max Attempts Exceeded: `400 Bad Request` `{"succeeded":false,"result":null,"errors":["Maximum verification attempts exceeded. Please request a new code."]}`
+  - Expired Code: `400 Bad Request` `{"succeeded":false,"result":null,"errors":["Verification code has expired. Please request a new code."]}`
+  - Replay Attempt: `400 Bad Request` `{"succeeded":false,"result":null,"errors":["This verification code has already been used. Please request a new code."]}`
+
+#### Endpoint 3: Resend OTP Code
+- **URL**: `POST /api/users/two-factor/resend` *(Alias supported: `POST /api/users/login-otp/request`)*
+- **Auth**: None (`[AllowAnonymous]`)
+- **Request Body**:
+  ```json
+  {
+    "twoFactorToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+  }
+  ```
+  *(Or `{"email": "staff@relaypark.vn"}`).*
+
+- **Response Success**:
+  - **Status**: `200 OK`
+  - **Body**:
+    ```json
+    {
+      "succeeded": true,
+      "result": {
+        "succeeded": true,
+        "twoFactorToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.new_token...",
+        "destination": "s***r@relaypark.vn",
+        "message": "A new verification code has been sent to your email."
+      },
+      "errors": []
+    }
+    ```
+- **Response Rate Limited**:
+  - **Status**: `400 Bad Request`
+  - **Body**:
+    ```json
+    {
+      "succeeded": false,
+      "result": null,
+      "errors": ["Please wait 48 seconds before requesting a new verification code."]
+    }
+    ```
+
+---
+
+### 16.4 Automated Test Suite Evidence
+
+Full automated test suites were developed and executed across the application and integration test projects:
+
+| Test Project | Test Class | Test Count | Pass / Fail | Key Verifications |
+| :--- | :--- | :--- | :--- | :--- |
+| `PMS.Application.UnitTests` | `TwoFactorAuthServiceTests` | 11 | **11 / 0 Passed** | 2FA initiation without token, email dispatch, correct OTP verification, wrong OTP rejection & attempt tracking, max attempt lockout, expiration handling, replay prevention, 60s cooldown rate limiting, inactive account rejection, activation pending rejection, email failure safe rollback. |
+| `PMS.Application.UnitTests` | Other existing service tests | 150 | **150 / 0 Passed** | No regressions in existing account, profile, parking lot, zone, and slot services. |
+| `PMS.Api.IntegrationTests` | `TwoFactorAuthIntegrationTests` | 4 | **4 / 0 Passed** | Full HTTP end-to-end flow: password login returns 2FA challenge with null token; OTP verification returns valid JWT; returned JWT authorizes `/api/users/profile`; wrong OTP returns 400; resend within cooldown is rate-limited. |
+| `PMS.Api.IntegrationTests` | Other existing integration tests | 54 | **54 / 0 Passed** | Conformance and existing endpoint tests maintain 100% pass rate. |
+| **Total Automated Tests** | Solution-Wide | **219** | **219 / 0 Passed** | **100% Pass Rate (0 Failed, 0 Skipped)**. |
+
+---
+
+### 16.5 Live Runtime & Database Verification
+
+The backend service was started in development profile against `(localdb)\mssqllocaldb`:
+1. **Schema Creation**: `dbo.OtpCodes` was automatically verified and created by `EnsurePmsTablesAsync`.
+2. **Direct Admin Login**: Authenticated via `POST /api/users/authenticate` with username `admin` (`TwoFactorEnabled = false`), verifying that existing non-2FA administration logins continue to receive a JWT directly.
+3. **Internal Staff 2FA Login Flow**:
+   - Created and activated a new internal manager account (`mgr_live2fa`) setting `TwoFactorEnabled = true`.
+   - Called `POST /api/users/authenticate`: Server generated a 6-digit OTP (`795319`), dispatched via `DevEmailService`, and returned `HTTP 200 OK` with `token: null`, `requiresTwoFactor: true`, and `twoFactorToken`.
+   - Called `POST /api/users/two-factor` with valid code `795319`: Received `HTTP 200 OK`, `requiresTwoFactor: false`, and signed JWT access token.
+   - Replayed code `795319` with the same challenge token: Server rejected request with `HTTP 400 Bad Request` (`"This verification code has already been used"`).
+
+---
+
+### 16.6 Evidence Classification
+
+| Category | Statement | Evidence & Verification |
+| :--- | :--- | :--- |
+| `[FACT]` | Password verification does not issue an access token for 2FA-enabled accounts. | Verified in unit test `LoginAsync_WhenUserHas2FA...` and integration test `Password_Login_For_Activated_Staff...`: `result.Token` is strictly null. |
+| `[FACT]` | A cryptographically secure, single-use OTP is stored in hashed format. | Verified in `TwoFactorTokenHelperTests` and database inspection: `CodeHash` stores salted SHA-256; `ConsumedAt` is populated upon verification. |
+| `[FACT]` | Challenge replay and brute-force guessing are rejected. | Verified in tests: subsequent attempt with consumed OTP returns 400; 5 consecutive failed attempts lock the challenge. |
+| `[FACT]` | Resend requests are rate-limited with a 60-second cooldown. | Verified in unit and integration tests: resend within 60s returns HTTP 400 with remaining seconds. |
+| `[FACT]` | Email service failures do not issue tokens. | Verified in unit test `LoginAsync_WhenEmailServiceFails_Should_ThrowException...`: OTP invalidated and exception thrown without issuing JWT. |
+| `[FACT]` | Solution builds with 0 errors and all 219 tests pass. | Verified via `dotnet test`: 161 Unit + 58 Integration tests passing. |
+
+---
+
+### 16.7 Final Task Status
+
+- **Implementation Status**: **Complete**.
+- **Automated Verification**: **Passed** (219/219 tests).
+- **Runtime Local Verification**: **Passed** (Verified against live Kestrel instance and LocalDB).
+- **Git Safety Compliance**: **Strictly Respected** (Zero Git commands executed in team workspace `C:\DEV\OJT-FSA-Team3`).
+- **Reporting Repository Status**: Pushed to `origin/main` in `C:\DEV\OJT-report`.
+
