@@ -366,3 +366,61 @@ Khi task lập trình chính thức được giao, công việc sẽ được tr
 
 ---
 *Báo cáo được tổng hợp dựa trên phân tích mã nguồn thực tế tại chỗ, tuân thủ nguyên tắc Safe Code Modification & Read-Only Planning.*
+
+---
+
+## 11. Báo Cáo Triển Khai Thực Tế Lát Cắt 1 (Slice 1 Implementation Report)
+
+- **Ngày thực hiện:** 23/10/2026
+- **Phạm vi hoàn thành:** Lát cắt 1 — Xây dựng DTOs, FluentValidation, Interface & Hiện thực hóa tầng Service nghiệp vụ (`IPricingRuleService`, `PricingRuleService`), đăng ký DI và kiểm thử đơn vị.
+- **Trạng thái:** `COMPLETED` (Hoàn thành 100% mục tiêu lát cắt 1).
+
+### 11.1. Bằng Chứng Mã Nguồn & Các Quyết Định Đã Xác Minh (Verified Source Facts)
+
+1. **Về EV charging price semantics:**
+   - `[FACT]` Trong CSDL (`dbo.VehicleTypes`), bảng loại phương tiện gồm 4 mã: `CAR_4`, `CAR_7`, `MOTORBIKE`, `BICYCLE`.
+   - `[FACT]` Thực thể `PricingRule` và CSDL `dbo.PricingRules` hiện tại không có cột lưu đơn giá điện (`EnergyRatePerKwh`).
+   - `[FACT]` Giá điện EV trong UI mẫu (3,800 VND/kWh) hiện là giá trị tĩnh ở Frontend (`EV_ENERGY_RATE = 3_800` trong `managerOps.mock.ts`).
+   - `[DECISION]` Không tự ý tạo thêm cột hoặc bảng mới cho EV kWh. Phân hệ định giá tập trung quản lý phí đỗ xe theo phân loại xe và thời gian. EV được hỗ trợ thông qua cấu hình quy tắc cho xe điện hoặc theo Zone trạm sạc.
+2. **Về Overnight surcharge window:**
+   - `[FACT]` Thực thể `PricingRule.OvernightSurcharge` đã tồn tại sẵn trong CSDL (`decimal(18,2)`).
+   - `[DECISION]` DTO và Service lưu trữ và trả về đầy đủ trường `OvernightSurcharge` tương thích với giao diện Manager.
+3. **Về Hành vi Nút "Deploy tariff update to gateways":**
+   - `[FACT]` Kiểm tra `ManagerPricingPage.tsx` dòng 238: nút này chỉ gọi `toast.info('Tariff deployment will be available once the pricing API exists.')`.
+   - `[FACT]` Trong kiến trúc Backend, `TariffProvider.ForAsync` nạp trực tiếp quy tắc định giá `Active` từ CSDL theo thời gian thực (BR-22).
+   - `[DECISION]` Tạm hoãn cơ chế đồng bộ Gateway phần cứng xuống lát cắt nâng cao; hiện tại việc chuyển trạng thái `Active` đã trực tiếp đưa bảng giá vào hiệu lực vận hành.
+4. **Về Grace periods, First Block, Billing Blocks, Lost Ticket, Max Daily Fee:**
+   - Toàn bộ các trường này đã được ánh xạ 1-1 chính xác với thực thể `PricingRule`, `FeeCalculator`, và `TariffProvider`.
+
+### 11.2. Danh Mục Tệp Tin Đã Triển Khai (Implemented Changes)
+
+| STT | Tập tin | Thao tác | Mô tả chi tiết |
+|:---:|:---|:---:|:---|
+| 1 | `src/PMS.Application/Models/Pricing/PricingRuleModels.cs` | **Tạo mới** | Định nghĩa các DTO: `PricingRuleModel`, `CreatePricingRuleModel`, `UpdatePricingRuleModel`, `SetPricingRuleStatusModel`, `PricingSimulationRequestModel`, `PricingSimulationResultModel`. Tái sử dụng `FeeDayModel` có sẵn. |
+| 2 | `src/PMS.Application/Models/Validators/Pricing/PricingRuleModelValidators.cs` | **Tạo mới** | Các bộ thẩm định FluentValidation: `CreatePricingRuleModelValidator`, `UpdatePricingRuleModelValidator`, `PricingSimulationRequestModelValidator` với đầy đủ ràng buộc nghiệp vụ. |
+| 3 | `src/PMS.Application/Services/IPricingRuleService.cs` | **Tạo mới** | Interface nghiệp vụ cho Manager Pricing CRUD: `GetPricingRulesAsync`, `GetPricingRuleByIdAsync`, `CreatePricingRuleAsync`, `UpdatePricingRuleAsync`, `SetPricingRuleStatusAsync`, `DeletePricingRuleAsync`, `SimulatePricingAsync`. |
+| 4 | `src/PMS.Application/Services/Impl/PricingRuleService.cs` | **Tạo mới** | Hiện thực hóa dịch vụ với đầy đủ kiểm tra phạm vi bãi (`LotScopeService.EnsureCanManageAsync`), ghi nhận lịch sử thay đổi (`PricingRuleHistory`), kiểm soát phiên bản (`VersionNo`), và tích hợp tính phí thử nghiệm qua `FeeCalculator` & `TariffProvider`. |
+| 5 | `src/PMS.Application/OperationsDependencyInjection.cs` | **Cập nhật** | Đăng ký `services.AddScoped<IPricingRuleService, PricingRuleService>();` đúng vị trí kiến trúc. |
+| 6 | `tests/PMS.Application.UnitTests/Operations/PricingRuleServiceTests.cs` | **Tạo mới** | 12 ca kiểm thử đơn vị bao quát toàn diện các luồng thành công, phân quyền, thẩm định lỗi, ghi nhận lịch sử và mô phỏng tính phí. |
+
+### 11.3. Kết Quả Kiểm Thử & Biên Dịch Thực Tế (Verification Results)
+
+- **Kiểm thử đơn vị tập trung (`PricingRuleServiceTests`):**
+  - Số lượng: **12 tests**
+  - Kết quả: **12/12 PASS** (Thời gian chạy: ~1s).
+  - Bao quát: Phân quyền Manager theo bãi (`ForbiddenException`), nạp danh sách lọc theo trạng thái, tạo quy tắc kèm ghi nhận `PricingRuleHistory`, cập nhật tăng `VersionNo`, chuyển trạng thái `Active` kèm `ApprovedBy`/`ApprovedAt`, xóa mềm chuyển sang `Archived`, thẩm định dữ liệu sai qua FluentValidation, và mô phỏng tính toán khớp 100% với `FeeCalculator`.
+- **Hồi quy toàn bộ bộ kiểm thử (`PMS.Application.UnitTests`):**
+  - Tổng số test: **373 tests**
+  - Kết quả: **373/373 PASS** (0 failed, 0 skipped, 2s).
+- **Biên dịch toàn bộ Solution (`PMS.sln`):**
+  - Lệnh: `dotnet build parking-management-system/PMS.sln`
+  - Kết quả: **Build Succeeded (0 Warning, 0 Error)** cho tất cả 7 project.
+
+### 11.4. Đánh Giá Khuyết Điểm, Điểm Nghẽn & Bước Tiếp Theo
+
+- `[FACT]` Không có thay đổi nào đối với Database Schema, Migration, Controller, hay Frontend trong lát cắt này.
+- `[FACT]` Không phát sinh bất kỳ xung đột hay điểm nghẽn (blocker) nào ngăn cản việc triển khai Lát cắt 2.
+- **Kế hoạch Lát cắt 2 (Slice 2):**
+  - Xây dựng `ManagerPricingController.cs` tại `src/PMS.API/Controllers/` với tuyến đường `api/manager/lots/{lotId:int}/pricing-rules`.
+  - Áp dụng phân quyền `[Authorize(Roles = "Manager,Admin")]`.
+  - Viết Integration Tests kiểm thử các Endpoint HTTP.
