@@ -424,3 +424,94 @@ Khi task lập trình chính thức được giao, công việc sẽ được tr
   - Xây dựng `ManagerPricingController.cs` tại `src/PMS.API/Controllers/` với tuyến đường `api/manager/lots/{lotId:int}/pricing-rules`.
   - Áp dụng phân quyền `[Authorize(Roles = "Manager,Admin")]`.
   - Viết Integration Tests kiểm thử các Endpoint HTTP.
+
+
+---
+
+## 12. Báo Cáo Triển Khai Thực Tế Lát Cắt 2 (Slice 2 Implementation Report)
+
+- **Ngày thực hiện:** 23/10/2026
+- **Phạm vi hoàn thành:** Lát cắt 2 — Xây dựng Controller HTTP bảo mật (`ManagerPricingController.cs`), thực thi đầy đủ phân quyền theo vai trò (`Manager, Admin`) và cô lập dữ liệu theo bãi (`lotId`), cùng bộ kiểm thử tích hợp đầu cuối (`ManagerPricingEndpointTests.cs`).
+- **Trạng thái:** `COMPLETED` (Hoàn thành 100% mục tiêu lát cắt 2).
+
+### 12.1. Danh Sách Tuyến Đường HTTP Thực Tế Đã Triển Khai (Implemented Endpoints)
+
+Controller đặt tại [`src/PMS.API/Controllers/ManagerPricingController.cs`](file:///C:/DEV/OJT-FSA-Team3/parking-management-system/src/PMS.API/Controllers/ManagerPricingController.cs) với tiền tố định tuyến `api/manager/lots/{lotId:int}/pricing-rules` kế thừa từ `ApiController`:
+
+| Phương Thức | Tuyến Đường (Route) | Phân Quyền | DTO Request / Query | DTO Phản Hồi | Chức Năng Nghiệp Vụ |
+|:---:|:---|:---:|:---|:---|:---|
+| **`GET`** | `/api/manager/lots/{lotId:int}/pricing-rules` | `Manager, Admin` | `[FromQuery] string status = null` | `ApiResult<IReadOnlyList<PricingRuleModel>>` | Lấy danh sách bảng giá của bãi (lọc theo trạng thái) |
+| **`GET`** | `/api/manager/lots/{lotId:int}/pricing-rules/{id:int}` | `Manager, Admin` | Đường dẫn `{id:int}` | `ApiResult<PricingRuleModel>` | Lấy chi tiết một bảng giá cụ thể |
+| **`POST`** | `/api/manager/lots/{lotId:int}/pricing-rules` | `Manager, Admin` | `CreatePricingRuleModel` | `ApiResult<PricingRuleModel>` | Tạo mới bảng giá cho bãi (gán version 1, ghi log) |
+| **`PUT`** | `/api/manager/lots/{lotId:int}/pricing-rules/{id:int}` | `Manager, Admin` | `UpdatePricingRuleModel` | `ApiResult<PricingRuleModel>` | Cập nhật cấu hình bảng giá (tăng version, ghi log) |
+| **`PATCH`**| `/api/manager/lots/{lotId:int}/pricing-rules/{id:int}/status` | `Manager, Admin` | `SetPricingRuleStatusModel` | `ApiResult<PricingRuleModel>` | Đổi trạng thái (Active phê duyệt, Inactive, Archived) |
+| **`DELETE`**| `/api/manager/lots/{lotId:int}/pricing-rules/{id:int}` | `Manager, Admin` | Đường dẫn `{id:int}` | `ApiResult<bool>` | Xóa mềm / lưu trữ bảng giá (`Status = "Archived"`) |
+| **`POST`** | `/api/manager/lots/{lotId:int}/pricing-rules/simulate` | `Manager, Admin` | `PricingSimulationRequestModel` | `ApiResult<PricingSimulationResultModel>` | Giả lập tính tiền checkout theo bảng giá (Sandbox) |
+
+### 12.2. Kiến Trúc Bảo Mật & Cô Lập Dữ Liệu Theo Bãi (Security & Lot Scoping)
+
+1. **Phân quyền tầng Controller (`Role-Based Access Control`):**
+   - Sử dụng thuộc tính `[Authorize(Roles = "Manager,Admin")]` nhất quán với cấu hình Identity và controller mẫu `ManagerOperationsController.cs`.
+   - Mọi yêu cầu không có JWT hoặc token không hợp lệ bị từ chối với mã HTTP `401 Unauthorized`.
+   - Người dùng có vai trò khác (`User`, `Staff`) bị từ chối với mã HTTP `403 Forbidden`.
+2. **Cô lập theo bãi đỗ (`Lot-Level Scope Enforcement`):**
+   - Mọi endpoint đều bắt buộc truyền `{lotId:int}` trên URL.
+   - Tầng Controller chuyển tiếp `lotId` tới `IPricingRuleService`, nơi `LotScopeService.EnsureCanManageAsync(lotId)` xác thực quyền sở hữu bãi đỗ (`ParkingLots.ManagerUserId == currentUserId`).
+   - `[FACT]` Nếu Manager của Bãi A cố tình truy cập vào endpoint của Bãi B bằng cách thay đổi `lotId` trên route, hệ thống ném `ForbiddenException` và trả về mã `403 Forbidden`.
+3. **Ngăn chặn tấn công tiêm mã ID chéo bãi (`Cross-Lot Rule ID Tampering Protection`):**
+   - `[FACT]` Khi một Manager truy cập hợp lệ vào Bãi A, nhưng truyền `id` của một bảng giá thuộc về Bãi B (`/api/manager/lots/{lotA}/pricing-rules/{ruleBId}`), truy vấn `FindRuleAsync` kiểm tra chặt chẽ điều kiện `r.Id == ruleId && (r.ParkingLotId == lotId || r.ParkingLotId == null)`.
+   - Kết quả: Bảng giá của Bãi B không bao giờ bị lộ hoặc bị sửa đổi qua Bãi A, hệ thống trả về mã `404 Not Found`.
+
+### 12.3. Quy Chuẩn Phản Hồi & Xử Lý Lỗi (Status Codes & Validation)
+
+- **Phản hồi thành công:** Toàn bộ dữ liệu được bọc trong cấu trúc chuẩn `ApiResult<T>.Success(result)` với HTTP `200 OK`.
+- **Lỗi thẩm định dữ liệu (Validation Errors):** Được lọc tự động qua `ValidateModelAttribute` và FluentValidation, trả về HTTP `400 Bad Request` dạng `ApiResult<string>.Failure(errors)`.
+- **Lỗi nghiệp vụ & Không tìm thấy:** Được ánh xạ tự động qua `ExceptionHandlingMiddleware`:
+  - `NotFoundException` -> HTTP `404 Not Found`.
+  - `ForbiddenException` -> HTTP `403 Forbidden`.
+  - `BadRequestException` -> HTTP `400 Bad Request`.
+  - `ConflictException` -> HTTP `409 Conflict`.
+
+### 12.4. Danh Mục Tệp Tin Đã Triển Khai Trong Lát Cắt 2
+
+| STT | Tập tin | Thao tác | Mô tả chi tiết |
+|:---:|:---|:---:|:---|
+| 1 | `src/PMS.API/Controllers/ManagerPricingController.cs` | **Tạo mới** | Controller chính thức hiện thực hóa 7 endpoints HTTP cho tính năng Quản lý Bảng giá, tích hợp `IPricingRuleService` và bảo mật theo role/lot. |
+| 2 | `tests/PMS.Api.IntegrationTests/Tests/ManagerPricingEndpointTests.cs` | **Tạo mới** | 14 ca kiểm thử tích hợp API qua HTTP client thực tế, kiểm tra định tuyến, phân quyền, cô lập bãi, và xử lý lỗi. |
+
+### 12.5. Bằng Chứng Kiểm Thử Tích Hợp & Biên Dịch (Verification Evidence)
+
+- **Kiểm thử tích hợp API (`ManagerPricingEndpointTests.cs`):**
+  - Lệnh chạy: `dotnet test tests/PMS.Api.IntegrationTests/PMS.Api.IntegrationTests.csproj --filter "FullyQualifiedName~ManagerPricingEndpointTests"`
+  - Số lượng ca kiểm thử: **14 tests**
+  - Kết quả: **14/14 PASS** (Thời gian chạy: 12 giây).
+  - Chi tiết 14 ca kiểm thử bao quát:
+    1. `Endpoint_WhenUnauthenticated_ReturnsUnauthorized`: Xác minh HTTP 401 khi không đăng nhập.
+    2. `Endpoint_WhenUserRoleUnauthorized_ReturnsForbidden`: Xác minh HTTP 403 khi role `User` gọi API Manager.
+    3. `Endpoint_WhenAdmin_AccessesPermittedLot`: Xác minh HTTP 200 khi Admin truy cập bãi đỗ.
+    4. `GetPricingRules_WhenManagerAssigned_ReturnsSuccess`: Xác minh HTTP 200 khi Manager bãi lấy danh sách.
+    5. `GetPricingRules_WhenManagerNotAssigned_ReturnsForbidden`: Xác minh HTTP 403 khi Manager bãi A truy cập bãi B.
+    6. `CreatePricingRule_WhenValid_ReturnsSuccessAndPersistsRule`: Xác minh HTTP 200 tạo quy tắc bảng giá mới.
+    7. `GetPricingRuleById_WhenBelongsToLot_ReturnsSuccess`: Xác minh HTTP 200 lấy chi tiết quy tắc.
+    8. `GetPricingRuleById_WhenRuleBelongsToAnotherLot_ReturnsNotFound`: Xác minh HTTP 404 ngăn chặn truy cập ID chéo bãi.
+    9. `UpdatePricingRule_WhenValid_BumpsVersion`: Xác minh HTTP 200 cập nhật quy tắc và tăng `VersionNo` lên 2.
+    10. `SetPricingRuleStatus_WhenActive_SetsApproved`: Xác minh HTTP 200 đổi trạng thái sang Active và gán ApprovedBy.
+    11. `DeletePricingRule_WhenValid_ArchivesRule`: Xác minh HTTP 200 lưu trữ bảng giá (`Archived`).
+    12. `SimulatePricing_WhenValid_ReturnsCalculation`: Xác minh HTTP 200 mô phỏng tính phí sandbox khớp 100% logic FeeCalculator.
+    13. `CreatePricingRule_WhenInvalidData_ReturnsBadRequest`: Xác minh HTTP 400 khi dữ liệu vi phạm FluentValidation.
+    14. `GetPricingRuleById_WhenNonExistent_ReturnsNotFound`: Xác minh HTTP 404 khi tra cứu ID không tồn tại.
+- **Kiểm thử đơn vị tầng Application (`PricingRuleServiceTests.cs`):**
+  - Kết quả: **12/12 PASS** (Không bị ảnh hưởng).
+- **Biên dịch toàn bộ giải pháp (`PMS.sln`):**
+  - Lệnh: `dotnet build parking-management-system/PMS.sln`
+  - Kết quả: **Build Succeeded (0 Warning, 0 Error)** cho toàn bộ 7 projects.
+
+### 12.6. Điểm Nghẽn & Kế Hoạch Tiếp Theo Cho Lát Cắt 3 (Frontend Integration)
+
+- `[FACT]` Toàn bộ các API cần thiết để phục vụ giao diện Quản lý Bảng giá trên Frontend đã sẵn sàng, hoạt động ổn định và được kiểm chứng qua HTTP integration tests.
+- `[FACT]` Không phát sinh bất kỳ rào cản kỹ thuật hay lỗi kiến trúc nào.
+- **Kế hoạch Lát cắt 3 (Slice 3):**
+  - Xây dựng API service client tại Frontend (`src/api/pricing.service.ts`).
+  - Xây dựng React Query hooks (`usePricingRules`, `useCreatePricingRule`, `useUpdatePricingRule`, `useSetPricingRuleStatus`, `useDeletePricingRule`, `useSimulatePricing`).
+  - Cập nhật namespace `pricing` trong `src/api/queryKeys.ts`.
+  - Thay thế dữ liệu tĩnh `demoTariffs` trong `ManagerPricingPage.tsx` bằng dữ liệu API thực tế.
