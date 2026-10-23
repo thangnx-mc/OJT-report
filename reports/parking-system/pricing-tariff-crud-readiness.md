@@ -515,3 +515,119 @@ Controller đặt tại [`src/PMS.API/Controllers/ManagerPricingController.cs`](
   - Xây dựng React Query hooks (`usePricingRules`, `useCreatePricingRule`, `useUpdatePricingRule`, `useSetPricingRuleStatus`, `useDeletePricingRule`, `useSimulatePricing`).
   - Cập nhật namespace `pricing` trong `src/api/queryKeys.ts`.
   - Thay thế dữ liệu tĩnh `demoTariffs` trong `ManagerPricingPage.tsx` bằng dữ liệu API thực tế.
+
+
+---
+
+## 13. Báo Cáo Triển Khai Lát Cắt 3: Tích Hợp API Frontend & Giao Diện CRUD Bảng Giá
+
+### 13.1. Mục Tiêu & Phạm Vi Thực Hiện (Slice 3 Scope)
+
+- **Mục tiêu:** Kết nối hoàn chỉnh trang Quản lý Bảng giá của Quản lý (`ManagerPricingPage.tsx`) với Backend API đã được hoàn thành và bảo vệ trong Lát cắt 2 (`/api/manager/lots/{lotId}/pricing-rules`).
+- **Phạm vi giao diện người dùng:**
+  - Loại bỏ hoàn toàn dữ liệu giả lập tĩnh (`demoTariffs`).
+  - Tải dữ liệu thực tế từ Backend dựa trên phạm vi bãi đỗ xe đã chọn (`WithManagerLot` / `lot.id`).
+  - Hỗ trợ đầy đủ các thao tác CRUD:
+    - **Xem danh sách (Read):** Lọc theo các tab `All`, `Active`, `Inactive`, `Draft` với số đếm badge động.
+    - **Tạo mới (Create):** Drawer / Sheet cấu hình biểu phí (`ManagerPricingFormSheet.tsx`) tải động danh mục loại phương tiện từ Backend (`useVehicleTypes()`).
+    - **Chỉnh sửa (Update):** Nạp dữ liệu bảng giá hiện tại vào Form Sheet, gửi cập nhật an toàn qua HTTP PUT.
+    - **Đổi trạng thái (Activate/Deactivate):** Chuyển đổi trạng thái hoạt động với phản hồi tức thì qua HTTP PATCH (`/status`).
+    - **Lưu trữ (Archive/Delete):** Xóa mềm / chuyển trạng thái sang `Archived` kèm hộp thoại cảnh báo an toàn (`ConfirmDialog`).
+    - **Mô phỏng tính cước (Interactive Sandbox Simulation):** Gửi yêu cầu tính phí kiểm thử thời gian thực đến endpoint `POST /simulate` và hiển thị bóc tách chi tiết từng ngày lưu trú (`FeeDayModel`).
+- **Phạm vi an toàn mã nguồn:**
+  - `[FACT]` Toàn bộ thay đổi nằm trong workspace Frontend (`C:\DEV\OJT-FSA-Team3\parking-management-system-frontend`).
+  - `[FACT]` Không chỉnh sửa bất kỳ file Backend, CSDL hay migration nào.
+
+---
+
+### 13.2. Chi Tiết Các Tệp Tin Triển Khai & Cấu Trúc Mã Nguồn
+
+#### 1. DTOs & Hợp Đồng Dữ Liệu (`src/types/pricing.dto.ts`)
+Tệp tin mới định nghĩa đầy đủ các kiểu dữ liệu tương ứng 1:1 với Backend models:
+- `PricingRuleModel`: Cấu trúc dữ liệu đầy đủ của một bảng giá trả về từ Backend (`id`, `lotId`, `vehicleTypeId`, `vehicleTypeCode`, `vehicleTypeName`, `chargeModel`, `graceMinutes`, `blockMinutes`, `blockPrice`, `maxDailyFee`, `overnightSurcharge`, `lostTicketFee`, `status`, `effectiveFrom`, `effectiveTo`, `versionNo`, `approvedBy`, `reason`, `createdAt`, `updatedAt`).
+- `CreatePricingRuleModel`: Hợp đồng tạo mới bảng giá.
+- `UpdatePricingRuleModel`: Hợp đồng cập nhật bảng giá.
+- `SetPricingRuleStatusModel`: Hợp đồng cập nhật trạng thái (`Draft` / `Active` / `Inactive`).
+- `PricingSimulationRequestModel` & `PricingSimulationResultModel`: Hợp đồng cho tính năng mô phỏng phí sandbox kèm mảng bóc tách `FeeDayModel`.
+
+#### 2. Dịch Vụ Gọi API Client (`src/api/pricing.service.ts`)
+Tệp tin mới đóng gói toàn bộ các hàm gọi API thông qua `axiosClient` (`http` wrapper tự động unwrap `ApiResult<T>`):
+- `pricingApi.list(lotId, status?)`: `GET /api/manager/lots/{lotId}/pricing-rules` (có query param `status`).
+- `pricingApi.getById(lotId, id)`: `GET /api/manager/lots/{lotId}/pricing-rules/{id}`.
+- `pricingApi.create(lotId, data)`: `POST /api/manager/lots/{lotId}/pricing-rules`.
+- `pricingApi.update(lotId, id, data)`: `PUT /api/manager/lots/{lotId}/pricing-rules/{id}`.
+- `pricingApi.setStatus(lotId, id, data)`: `PATCH /api/manager/lots/{lotId}/pricing-rules/{id}/status`.
+- `pricingApi.delete(lotId, id, reason?)`: `DELETE /api/manager/lots/{lotId}/pricing-rules/{id}`.
+- `pricingApi.simulate(lotId, data)`: `POST /api/manager/lots/{lotId}/pricing-rules/simulate`.
+
+#### 3. Chuẩn Hóa Khóa Truy Vấn (`src/api/queryKeys.ts`)
+Bổ sung namespace quản lý cache tập trung cho module Pricing:
+```ts
+pricing: {
+  all: ['pricing'] as const,
+  list: (lotId: number | string, status?: string) => ['pricing', 'list', lotId, status ?? 'ALL'] as const,
+  detail: (lotId: number | string, id: number | string) => ['pricing', 'detail', lotId, id] as const,
+}
+```
+
+#### 4. Custom React Query Hooks (`src/hooks/usePricingRules.ts`)
+Tệp tin mới cung cấp các hook chuẩn hóa dữ liệu và tự động quản lý vòng đời bộ nhớ đệm (cache invalidation):
+- `usePricingRules(lotId, status)`: Tải danh sách bảng giá theo bãi đỗ và bộ lọc trạng thái.
+- `usePricingRule(lotId, id)`: Tải chi tiết một bảng giá cụ thể.
+- `useCreatePricingRule(lotId)`: Mutation tạo mới, tự động `invalidateQueries` danh sách bảng giá của bãi đỗ.
+- `useUpdatePricingRule(lotId)`: Mutation cập nhật, tự động `invalidateQueries` danh sách và chi tiết.
+- `useSetPricingRuleStatus(lotId)`: Mutation đổi trạng thái (Kích hoạt/Vô hiệu hóa).
+- `useDeletePricingRule(lotId)`: Mutation lưu trữ/xóa mềm.
+- `useSimulatePricing(lotId)`: Mutation gọi tính toán phí giả lập thời gian thực.
+
+#### 5. Ngăn Trượt Cấu Hình Biểu Phí (`src/components/features/manager/ManagerPricingFormSheet.tsx`)
+Thành phần giao diện biểu mẫu trượt (Drawer / Sheet) chuyên dụng:
+- Sử dụng `react-hook-form` kết hợp `zodResolver` kiểm định dữ liệu nghiêm ngặt.
+- Tải danh mục loại xe thực tế từ Backend qua `useVehicleTypes()`.
+- Hỗ trợ đầy đủ hai chế độ Tạo mới (Create) và Cập nhật (Edit).
+- Tích hợp thông báo tương tác qua `sonner` (`toast.success` / `toast.error`).
+
+#### 6. Giao Diện Quản Lý & Tương Tác CRUD (`src/pages/management/ManagerPricingPage.tsx`)
+Tái cấu trúc toàn diện trang quản trị biểu phí:
+- **Xóa bỏ hoàn toàn dữ liệu tĩnh:** Thay thế `demoTariffs` bằng `usePricingRules(lot.id)`.
+- **Thẻ hiển thị bảng giá (`TariffCard`):** Hiển thị trực quan thông tin mã quy tắc, tên, loại xe, mô hình tính phí (Block, Hourly...), đơn giá block đầu và block kế tiếp, phí ngày tối đa, phụ phí đêm, và phí mất vé.
+- **Hành động trực tiếp:** Tích hợp các nút Edit (mở Form Sheet), Activate/Deactivate (gọi patch status), Archive (kích hoạt ConfirmDialog).
+- **Bộ lọc tab trạng thái:** Chuyển đổi linh hoạt giữa All, Active, Inactive, Draft với số lượng đếm được tính toán động từ dữ liệu API.
+- **Xử lý trạng thái UX hoàn chỉnh:** Bao gồm `LoadingState`, `ErrorState` (kèm cơ chế Retry), và `EmptyState` (kèm nút Thêm bảng giá nhanh).
+- **Interactive Simulation Sandbox:** Giữ nguyên và nâng cấp khối mô phỏng cước để gọi trực tiếp tới `useSimulatePricing(lot.id)`, hiển thị kết quả phân tách chi tiết từng ngày (`FeeDayModel`).
+- **Tuân thủ các quyết định đã xác minh:**
+  - Tỷ giá năng lượng sạc xe điện (EV): Giữ mức tham chiếu cố định `3.800 VND/kWh` trên thẻ KPI theo đúng kết luận kiến trúc (chưa có trường lưu trữ EV kWh trong schema bảng giá hiện tại).
+  - Cửa sổ ân hạn xuất bến (Exit Grace Window): Hiển thị mức cấu hình chung của toàn hệ thống cổng (15 phút).
+  - Nút Triển khai cổng (Deploy to Gate hardware): Hiển thị thông báo trạng thái hoạt động tức thì thay vì gọi luồng phần cứng chưa kích hoạt.
+
+---
+
+### 13.3. Bằng Chứng Biên Dịch & Xác Minh Kỹ Thuật (Verification Evidence)
+
+1. **Kiểm tra kiểu dữ liệu TypeScript (`typecheck`):**
+   - Lệnh thực thi: `npm.cmd --prefix parking-management-system-frontend run typecheck`
+   - Chi tiết: `tsc -b`
+   - Kết quả: **PASS (0 Errors, 0 Warnings)**.
+
+2. **Kiểm tra đóng gói ứng dụng Production (`build`):**
+   - Lệnh thực thi: `npm.cmd --prefix parking-management-system-frontend run build`
+   - Chi tiết: `tsc -b && vite build`
+   - Kết quả: **PASS (Built in 15.74s)**.
+   - Artifact sinh ra thành công:
+     - `dist/assets/ManagerPricingPage-D5fLNsbm.js: 26.16 kB (gzip: 7.37 kB)`
+     - Toàn bộ 53 bundles được tối ưu và đóng gói hoàn tất.
+
+---
+
+### 13.4. Hướng Dẫn Xác Minh Thực Tế Cho Người Dùng (Manual Verification Runbook)
+
+Sau khi khởi chạy Backend và Frontend:
+1. Đăng nhập tài khoản Quản lý bãi đỗ (`Manager`).
+2. Điều hướng tới menu **Pricing & Tariffs** (`/management/pricing`).
+3. Chọn một bãi đỗ xe thuộc quyền quản lý từ thanh chọn bãi đỗ.
+4. **Kiểm tra tải dữ liệu:** Quan sát danh sách bảng giá được tải trực tiếp từ Backend. Nếu chưa có bảng giá, giao diện hiển thị EmptyState.
+5. **Kiểm tra tạo mới:** Bấm nút **Add Tariff Rule**, điền các thông tin (Tên, Loại xe, Đơn giá block, Cước ngày...) và bấm **Create Tariff**. Bảng giá mới xuất hiện trên danh sách mà không cần tải lại toàn bộ trang.
+6. **Kiểm tra chỉnh sửa:** Bấm nút **Edit** trên thẻ bảng giá vừa tạo, điều chỉnh giá block hoặc tên quy tắc, bấm **Save Changes** và xác nhận dữ liệu trên thẻ cập nhật tức thì.
+7. **Kiểm tra chuyển đổi trạng thái:** Bấm nút **Activate** / **Deactivate** và xác minh nhãn trạng thái đổi màu tương ứng (Active: Xanh lá, Inactive: Trung tính).
+8. **Kiểm tra mô phỏng:** Tại khối **Live Tariff Sandbox**, chọn loại phương tiện, thời gian check-in và check-out, bấm **Calculate Stay Fee** để xác nhận cước tính toán khớp với biểu phí đang cấu hình.
+9. **Kiểm tra lưu trữ:** Bấm biểu tượng thùng rác (**Archive**), xác nhận trên hộp thoại cảnh báo và kiểm tra quy tắc chuyển sang trạng thái lưu trữ (`Archived`).
