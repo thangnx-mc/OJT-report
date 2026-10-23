@@ -631,3 +631,104 @@ Sau khi khởi chạy Backend và Frontend:
 7. **Kiểm tra chuyển đổi trạng thái:** Bấm nút **Activate** / **Deactivate** và xác minh nhãn trạng thái đổi màu tương ứng (Active: Xanh lá, Inactive: Trung tính).
 8. **Kiểm tra mô phỏng:** Tại khối **Live Tariff Sandbox**, chọn loại phương tiện, thời gian check-in và check-out, bấm **Calculate Stay Fee** để xác nhận cước tính toán khớp với biểu phí đang cấu hình.
 9. **Kiểm tra lưu trữ:** Bấm biểu tượng thùng rác (**Archive**), xác nhận trên hộp thoại cảnh báo và kiểm tra quy tắc chuyển sang trạng thái lưu trữ (`Archived`).
+
+
+---
+
+## 14. Báo Cáo Điều Tra & Khắc Phục Lỗi CRUD Bảng Giá (Pricing Bug Investigation & Fix)
+
+### 14.1. Nguyên Nhân Gốc (Root Cause) & Bằng Chứng Thực Tế
+
+1. **Lỗi `An error occurred while saving the entity changes` khi Tạo mới Bảng giá:**
+   - **Bằng chứng Server Logs:**
+     ```
+     Microsoft.EntityFrameworkCore.DbUpdateException: An error occurred while saving the entity changes.
+      ---> Microsoft.Data.SqlClient.SqlException (0x80131904): Invalid object name 'PricingRuleHistories'.
+        at Microsoft.EntityFrameworkCore.Update.ReaderModificationCommandBatch.ExecuteAsync...
+     ```
+   - **Nguyên nhân cốt lõi:**
+     - Trong `PMS.DataAccess\Persistence\AutomatedMigration.Operations.cs`, bảng `PricingRules` đã được khai báo DDL tạo bảng tự động, nhưng bảng `PricingRuleHistories` (dùng để lưu vết lịch sử thay đổi biểu phí) lại **chưa được thêm vào script DDL khởi tạo**.
+     - Trong khi đó, entity `PricingRuleHistory` đã được đăng ký trong `PmsDbContext` và được `PricingRuleService` gọi ghi dữ liệu sau mỗi thao tác. Khi chạy trên môi trường thực tế (SQL Server `localhost\SQLEXPRESS`), SQL Server báo lỗi thiếu bảng `PricingRuleHistories`.
+
+2. **Tại sao dữ liệu vẫn được lưu dù UI báo lỗi (Dẫn đến tạo trùng lặp):**
+   - Trong `PricingRuleService.CreatePricingRuleAsync`, mã nguồn cũ thực hiện hai lần lưu tách biệt:
+     ```csharp
+     pmsContext.PricingRules.Add(rule);
+     await pmsContext.SaveChangesAsync(); // Lệnh 1: Ghi thành công vào PricingRules (sinh Id)
+
+     pmsContext.PricingRuleHistories.Add(...);
+     await pmsContext.SaveChangesAsync(); // Lệnh 2: Bị văng lỗi do thiếu bảng PricingRuleHistories
+     ```
+   - Do `TransactionMiddleware` của hệ thống chỉ áp dụng cho `DatabaseContext` (Identity) chứ không quản lý transaction cho `PmsDbContext`, Lệnh 1 đã được commit vĩnh viễn vào CSDL trước khi Lệnh 2 gây lỗi.
+   - Khi API ném lỗi HTTP 500, Frontend hiển thị thông báo lỗi và **không đóng form**. Người dùng thấy báo lỗi nên đã bấm nút "Create Tariff" thêm nhiều lần (thời gian ghi nhận trong DB cách nhau 9s, 6s, 41s). Mỗi lần bấm lại tạo ra thêm một bản ghi mới trong bảng `PricingRules`.
+
+3. **Lỗi Thao tác Delete/Archive không hoạt động:**
+   - Trong `PricingRuleService.DeletePricingRuleAsync`, thao tác đổi trạng thái sang `Archived` và thao tác ghi `PricingRuleHistories` được thực thi trong cùng một lần gọi `SaveChangesAsync()`. Lỗi thiếu bảng lịch sử khiến toàn bộ lệnh bị rollback, quy tắc không thể chuyển sang `Archived`.
+   - Ngoài ra, phương thức `GetPricingRulesAsync` khi `status` rỗng (truy vấn mặc định cho tab "All") trước đây chưa loại trừ các bản ghi có trạng thái `Archived`.
+
+---
+
+### 14.2. Giải Pháp Khắc Phục Triệt Để
+
+1. **Bổ sung DDL Bảng Lịch Sử trong `AutomatedMigration.Operations.cs`:**
+   - Bổ sung khối khởi tạo idempotent: `IF OBJECT_ID('dbo.PricingRuleHistories', 'U') IS NULL CREATE TABLE [dbo].[PricingRuleHistories] (...)`.
+   - Bảng `PricingRuleHistories` đã được tự động tạo thành công trên SQL Server ngay khi khởi động lại API.
+
+2. **Bảo vệ Vòng Đời Ghi Lịch Sử trong `PricingRuleService.cs`:**
+   - Xây dựng phương thức trợ giúp `TryRecordHistoryAsync`: Đóng gói việc ghi lịch sử trong khối `try/catch`. Nếu việc ghi log gặp sự cố, hệ thống ghi log cảnh báo (`LogWarning`) và tách entity (`Detached`) khỏi `ChangeTracker`, **tuyệt đối không làm gián đoạn hay đổ vỡ nghiệp vụ chính của người dùng**.
+
+3. **Cơ chế Chống Tạo Trùng Lập (Duplicate Prevention & Idempotency):**
+   - **Phía Backend (`PricingRuleService.cs`):**
+     - Bổ sung kiểm tra Idempotency: Khi nhận yêu cầu tạo mới, hệ thống kiểm tra nếu trong vòng **15 giây** trước đó đã có một bảng giá cùng `ParkingLotId`, `VehicleTypeId`, `Name` được tạo bởi chính người dùng đó, hệ thống sẽ trả về ngay bản ghi vừa tạo thay vì chèn bản ghi trùng lặp.
+   - **Phía Frontend (`ManagerPricingFormSheet.tsx`):**
+     - Bổ sung cờ `isSubmittingRef` (`useRef(false)`) nhằm vô hiệu hóa tức thì các lần click đúp liên tiếp trong cùng một khung thời gian render.
+
+4. **Chuẩn Hóa Bộ Lọc Danh Sách Bảng Giá (`GetPricingRulesAsync`):**
+   - Khi `status` không truyền hoặc là `"ALL"`, hệ thống tự động loại trừ các quy tắc đã lưu trữ: `query.Where(r => r.Status != "Archived")`.
+   - Khi chọn tab "Archived" (`status == "Archived"`), hệ thống truy vấn và hiển thị chính xác các quy tắc đã lưu trữ.
+
+---
+
+### 14.3. Danh Mục Các Tệp Tin Đã Chỉnh Sửa
+
+1. [`src/PMS.DataAccess/Persistence/AutomatedMigration.Operations.cs`](file:///C:/DEV/OJT-FSA-Team3/parking-management-system/src/PMS.DataAccess/Persistence/AutomatedMigration.Operations.cs): Thêm DDL khởi tạo bảng `PricingRuleHistories`.
+2. [`src/PMS.Application/Services/Impl/PricingRuleService.cs`](file:///C:/DEV/OJT-FSA-Team3/parking-management-system/src/PMS.Application/Services/Impl/PricingRuleService.cs): Idempotency check 15s, tách `TryRecordHistoryAsync`, chuẩn hóa lọc `Archived`.
+3. [`parking-management-system-frontend/src/components/features/manager/ManagerPricingFormSheet.tsx`](file:///C:/DEV/OJT-FSA-Team3/parking-management-system-frontend/src/components/features/manager/ManagerPricingFormSheet.tsx): Ngăn chặn submit lặp qua `isSubmittingRef`.
+4. [`tests/PMS.Application.UnitTests/Operations/PricingRuleServiceTests.cs`](file:///C:/DEV/OJT-FSA-Team3/parking-management-system/tests/PMS.Application.UnitTests/Operations/PricingRuleServiceTests.cs): Bổ sung 2 unit tests hồi quy cho cơ chế idempotency và archive.
+
+---
+
+### 14.4. Hiện Trạng Dữ Liệu Thực Tế Trong SQL Server
+
+- **Bản ghi nghi trùng hiện có (Tạo lúc kiểm thử ban đầu):**
+  - **ID 1:** `round 1` | `RULE-1-CAR_4-20261023082555` | Status: `Draft` | Tạo lúc: 08:25:55
+  - **ID 2:** `round 1` | `RULE-1-CAR_4-20261023082604` | Status: `Draft` | Tạo lúc: 08:26:04
+  - **ID 3:** `round 1` | `RULE-1-CAR_4-20261023082610` | Status: `Draft` | Tạo lúc: 08:26:10
+  - **ID 4:** `round 1` | `RULE-1-CAR_4-20261023082651` | Status: `Draft` | Tạo lúc: 08:26:51
+  - *Ghi chú:* Toàn bộ 4 bản ghi trên được giữ nguyên trạng, **không bị xóa hay can thiệp tự động** theo đúng quy định an toàn dữ liệu.
+- **Bản ghi kiểm thử sau khắc phục:**
+  - **ID 5:** `Integration Bugfix Verification Rule (Edited)` | Status: `Archived` | Version: 2 | Đã kiểm thử thành công toàn bộ vòng đời (Tạo -> Chống trùng -> Cập nhật -> Kích hoạt -> Lưu trữ).
+  - Bảng `PricingRuleHistories` đã ghi nhận đầy đủ 4 bản ghi lịch sử tương ứng với ID 5.
+
+---
+
+### 14.5. Kết Quả Kiểm Thử Thực Tế (Verification Evidence)
+
+1. **Unit Tests (`PMS.Application.UnitTests`):**
+   - Lệnh: `dotnet test tests/PMS.Application.UnitTests --filter "FullyQualifiedName~PricingRule"`
+   - Kết quả: **14/14 PASS** (bao gồm `CreatePricingRuleAsync_WhenCalledInRapidSuccession_ReturnsSameRuleWithoutDuplicates` và `DeletePricingRuleAsync_ArchivesRule_AndExcludesFromDefaultList`).
+2. **Integration Tests (`PMS.Api.IntegrationTests`):**
+   - Lệnh: `dotnet test tests/PMS.Api.IntegrationTests --filter "FullyQualifiedName~PricingRule"`
+   - Kết quả: **10/10 PASS**.
+3. **Frontend Typecheck:**
+   - Lệnh: `npm.cmd --prefix parking-management-system-frontend run typecheck`
+   - Kết quả: **PASS (0 Errors, 0 Warnings)**.
+4. **Kiểm thử Tích hợp Trực tiếp qua HTTP API (Live Verification Script):**
+   - Bước 1 (Đăng nhập): `dungnt@gmail.com` -> HTTP 200 OK.
+   - Bước 2 (Tạo bảng giá): HTTP 200 OK, sinh Rule ID 5.
+   - Bước 3 (Gửi lặp ngay lập tức): HTTP 200 OK, trả về đúng Rule ID 5, không tạo thêm bản ghi mới trong DB.
+   - Bước 4 (Chỉnh sửa bảng giá): HTTP 200 OK, Version nhảy từ 1 lên 2, giá cập nhật thành công.
+   - Bước 5 (Kích hoạt bảng giá): HTTP 200 OK, chuyển trạng thái sang `Active`, gán `ApprovedBy`.
+   - Bước 6 (Xóa / Lưu trữ bảng giá): HTTP 200 OK, chuyển trạng thái sang `Archived`.
+   - Bước 7 (Kiểm tra danh sách mặc định): Rule ID 5 không còn xuất hiện trong tab All.
+   - Bước 8 (Kiểm tra danh sách Archived): Rule ID 5 xuất hiện chính xác trong tab Archived.
