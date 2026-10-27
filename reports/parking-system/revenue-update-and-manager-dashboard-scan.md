@@ -988,3 +988,168 @@ Khi một phương tiện vào đỗ trong bãi, dòng doanh thu theo thời gia
 | Giao diện Khách đặt cọc | `src/components/customer/dashboard/ReserveBayPanel.tsx` | Nút chọn thanh toán cọc qua Ví, VNPay, MoMo. |
 | Giao diện Khách trả phí đỗ | `src/components/customer/dashboard/SessionCards.tsx#L239-L246` | Nút trả trước tiền đỗ xe qua Ví, VNPay, MoMo. |
 | Giao diện Thu ngân làn ra | `src/pages/staff/StaffCheckoutPage.tsx#L110-L159` | Thu tiền mặt F5 hoặc hiển thị Dynamic QR VietQR tại quầy. |
+
+
+---
+
+## 15. Hoàn Tác Triển Khai Thử Nghiệm & Báo Cáo Scan Codebase Baseline Sạch (Undo & Clean Baseline Codebase Scan)
+
+### 15.1. Mục Tiêu & Cơ Sở Khôi Phục (Restoration Objectives & Baseline Commits)
+
+Theo yêu cầu chuẩn hóa quy trình phát triển và thiết kế lại giải pháp từ đầu, toàn bộ các thay đổi mã nguồn thuộc phần triển khai thử nghiệm của task Báo cáo Doanh thu đã được **hoàn tác triệt để** trên cả Backend và Frontend. Hai workspace đã được đưa về trạng thái sạch nguyên bản (Clean Working Tree) tại đúng commit baseline khi kéo mã nguồn về máy:
+
+- **Backend Repository (`parking-management-system`):**
+  - Nhánh (Branch): `develop`
+  - Baseline Commit: **`2cf5eb18eaeb8df0b2c342f0dffb7b7a2d815e98`** (`feat: prevent duplicate phone number and citizen ID on profile update`)
+  - Trạng thái Git sau hoàn tác: `On branch develop, your branch is up to date with 'origin/develop', nothing to commit, working tree clean`.
+- **Frontend Repository (`parking-management-system-frontend`):**
+  - Nhánh (Branch): `develop`
+  - Baseline Commit: **`f0d6a004eb76fbe6c4ecce3e58319f666b6c2d15`** (`fix(wallet): update history transaction and fix infinite ping-pong loop`)
+  - Trạng thái Git sau hoàn tác: `On branch develop, nothing to commit, working tree clean`.
+
+---
+
+### 15.2. Danh Mục Các Tệp Tin Đã Hoàn Tác (List of Undone Files)
+
+Toàn bộ các tệp tin được chỉnh sửa hoặc tạo mới cho phần triển khai thử nghiệm đã được xử lý chính xác theo nguyên tắc an toàn:
+
+#### 1. Backend (`parking-management-system`):
+- **Khôi phục về nội dung baseline gốc (Restored):**
+  - `src/PMS.Application/OperationsDependencyInjection.cs`: Gỡ bỏ đăng ký dịch vụ `services.AddScoped<IRevenueReportService, RevenueReportService>();`. File trở về nguyên bản 45 dòng code ban đầu.
+- **Xóa bỏ triệt để các tệp tin mới tạo của phần thử nghiệm (Deleted Untracked Files):**
+  - `src/PMS.API/Controllers/ReportsController.cs` (Xóa bỏ bộ controller `/api/v1/reports/revenue/*`).
+  - `src/PMS.Application/Services/IRevenueReportService.cs` (Xóa bỏ interface).
+  - `src/PMS.Application/Services/Impl/RevenueReportService.cs` (Xóa bỏ service tính toán doanh thu thử nghiệm).
+  - `src/PMS.Application/Models/Reports/RevenueReportModels.cs` (Xóa bỏ toàn bộ DTOs báo cáo).
+  - `src/PMS.Application/Models/Reports/` (Xóa thư mục).
+  - `tests/PMS.Application.UnitTests/Reports/RevenueReportServiceTests.cs` (Xóa 10 unit tests thử nghiệm).
+  - `tests/PMS.Application.UnitTests/Reports/` (Xóa thư mục).
+  - `tests/PMS.Api.IntegrationTests/Tests/ReportsEndpointTests.cs` (Xóa 10 integration tests thử nghiệm).
+
+#### 2. Frontend (`parking-management-system-frontend`):
+- **Khôi phục về nội dung baseline gốc (Restored):**
+  - `.env.example`: Trả về giá trị mặc định ban đầu `VITE_MOCK_SERVICES=capacity,reports`.
+  - `src/config/env.ts`: Trả về danh sách service mock mặc định có chứa `reports`.
+  - `src/components/layout/adminNav.ts`: Gỡ bỏ menu item `{ to: '/management/revenue', label: 'Revenue Report', icon: ChartColumnBig }` khỏi `MANAGER_NAV`.
+  - `src/pages/admin/RevenueReportPage.tsx`: Trả về logic gốc (sử dụng `useParkingLots()` thuần túy cho Admin, gỡ bỏ hook `useAuth` và `useManagerLot`).
+  - `src/router.tsx`: Gỡ bỏ route `{ path: 'revenue', element: <RevenueReportPage /> }` khỏi nhóm route của Manager (`/management`).
+
+---
+
+### 15.3. Bằng Chứng Xác Minh Sau Hoàn Tác (Verification Evidence)
+
+1. **Kiểm tra trạng thái Git (Git Status Verification):**
+   - Backend: `git -C parking-management-system status` $\rightarrow$ `working tree clean`, `up to date with origin/develop`.
+   - Frontend: `git -C parking-management-system-frontend status` $\rightarrow$ `working tree clean`.
+   - `[FACT]` Không có bất kỳ tệp tin nào của các module khác (Auth, Profile, Booking, Gate, Pricing, Layout, Vehicle, Staff) bị sửa đổi hoặc xóa nhầm.
+2. **Kiểm tra Biên dịch Backend (Backend Compilation Check):**
+   - Chạy lệnh: `dotnet build PMS.sln`.
+   - Kết quả: **`Build succeeded. 0 Warning(s), 0 Error(s).`**
+3. **Kiểm tra Kiểm thử Đơn vị Backend (Unit Tests Verification):**
+   - Chạy lệnh: `dotnet test tests/PMS.Application.UnitTests`.
+   - Kết quả: **`Passed! - Failed: 0, Passed: 397, Skipped: 0, Total: 397`** (Toàn bộ 397 kiểm thử baseline của hệ thống đạt 100% Pass).
+4. **Kiểm tra Biên dịch & Bundle Frontend (Frontend Build Verification):**
+   - Chạy lệnh: `npm run build` (`tsc -b && vite build`).
+   - Kết quả: **`✓ built in 15.12s`**, hoàn tất 3.066 module mà không phát sinh bất kỳ lỗi TypeScript hay đóng gói nào.
+5. **Cơ sở dữ liệu (Database Integrity):**
+   - `[FACT]` Schema CSDL, migrations, dữ liệu seed và dữ liệu giao dịch hiện có hoàn toàn được giữ nguyên, không bị reset hay xóa bỏ.
+
+---
+
+### 15.4. Hiện Trạng Codebase Sau Khi Scan Lại Tại Baseline (Clean Baseline Codebase Scan)
+
+Dưới đây là kết quả phân tích độc lập trên codebase baseline sạch sau khi hoàn tác:
+
+#### 1. Cấu trúc hiện tại của hai codebase và các module liên quan đến doanh thu:
+- **Backend (`PMS.sln`):**
+  - `PMS.Core/Entities`: Chứa các thực thể tài chính và giao dịch: `Payment.cs`, `Payment.Gateway.cs`, `Invoice.cs`, `Wallet.cs`, `WalletTransaction.cs`, `ParkingSession.cs`, `Reservation.cs`, `ParkingLot.cs`, `PricingRule.cs`.
+  - `PMS.Application/Services`:
+    - `PaymentService.cs`: Chịu trách nhiệm tạo thanh toán cọc (`CreateDepositPaymentAsync`), thanh toán phiên đỗ (`CreateSessionPaymentAsync`), ghi nhận tiền mặt (`RecordCashAsync`), xử lý callback VNPay/MoMo (`HandleCallbackAsync`), trừ/nạp ví (`Wallet`), hoàn cọc (`RefundDepositAsync`).
+    - `GateService.cs`: Quản lý luồng xe ra vào, tính phí thời lượng theo biểu phí (`FeeCalculator.Calculate`), cấn trừ cọc (`Settle`), cấp Exit Window 15 phút.
+    - `ReservationService.cs`: Quản lý đặt chỗ trước, cọc giữ chỗ, hủy cọc, no-show.
+  - `PMS.API/Controllers`:
+    - `PaymentsController.cs`: Webhook và kiểm tra trạng thái thanh toán gateway.
+    - `ReservationsController.cs`: Đặt chỗ và kích hoạt thanh toán cọc.
+    - `ParkingSessionsController.cs`: Trả trước phí đỗ xe qua App.
+    - `StaffGateController.cs`: Thu phí tại bốt làn ra (tiền mặt / QR).
+    - `WalletController.cs`: Quản lý nạp/rút và số dư ví cá nhân.
+- **Frontend (`parking-management-system-frontend`):**
+  - Mặc định biến môi trường `VITE_MOCK_SERVICES=capacity,reports` $\rightarrow$ Module `reports` chạy trên **Mock Data** (`report.mock.ts`).
+  - `RevenueReportPage.tsx` chỉ tồn tại ở route Quản trị viên `/admin/revenue`. Giao diện Quản lý bãi (`/management`) hoàn toàn không có trang báo cáo doanh thu riêng.
+  - `ManagerConsolePage.tsx` (/management/console) có thẻ KPI "Today's Revenue", nhưng đang gọi `useRevenueByParkingLot` và `usePaymentMethodBreakdown` trỏ về dữ liệu mock.
+
+#### 2. Những thành phần thực sự tồn tại tại baseline (Thực vs Triển khai thử nghiệm):
+- **Thực sự tồn tại tại baseline:**
+  - Toàn bộ luồng tạo bản ghi `Payment`, trừ ví, cổng thanh toán VNPay/MoMo, cập nhật trạng thái `Status = Succeeded`, `PaidAt = Now`, và liên kết `ParkingLotId`.
+  - Bảng giá linh hoạt và công thức tính phí đỗ xe theo block giờ (`FeeCalculator`).
+  - Giao diện Admin Revenue Report và Manager Overview Console (chạy mock data).
+- **Hoàn toàn KHÔNG TỒN TẠI tại baseline (Đã hoàn tác):**
+  - `ReportsController.cs` không tồn tại.
+  - `RevenueReportService.cs` không tồn tại.
+  - Không có bất kỳ endpoint nào phục vụ `/api/v1/reports/*` hay `/api/reports/*`.
+  - Không có route `/management/revenue`.
+  - Bất kỳ cuộc gọi nào từ Frontend tới API báo cáo thật đều sẽ nhận mã `HTTP 404 Not Found`.
+
+#### 3. Các Entity, Bảng Dữ Liệu và Quan Hệ Hiện Có Liên Quan:
+- **`Payments`:**
+  - Khóa ngoại: `ParkingLotId` (liên kết bãi xe), `ReservationId` (liên kết đặt chỗ), `SessionId` (liên kết phiên đỗ), `InvoiceId` (liên kết hóa đơn), `CustomerUserId` (khách hàng), `CollectedByUserId` (nhân viên thu tiền).
+  - Cột trạng thái & mục đích: `Status` (`Pending`, `Succeeded`, `Failed`, `Refunded`), `Purpose` (`Deposit`, `ParkingFee`, `Refund`, `WalletTopUp`), `PaymentMethod` (`Cash`, `Online`, `Wallet`), `Amount`, `RefundedAmount`, `PaidAt`.
+- **`ParkingLots`:**
+  - Gồm: `Id`, `Code`, `Name`, `Address`, `ManagerUserId`, `IsActive`, `IsDeleted`.
+  - `[FACT]` **Không có cột `Revenue`, `TotalRevenue` hay `Balance`.** Bãi đỗ xe không tự lưu trữ số dư lũy kế trong CSDL.
+- **`Invoices`:**
+  - Gồm: `Id`, `InvoiceNumber`, `ParkingLotId`, `CustomerId`, `ReservationId`, `SessionId`, `SubTotal`, `TotalAmount`, `Status`, `PaidAt`.
+
+#### 4. Các API Hiện Hữu Liên Quan Trực Tiếp Đến Yêu Cầu (Chưa Chỉnh Sửa):
+- `POST /api/reservations/{id}/payments`: Khách trả cọc giữ chỗ (Ví / QR).
+- `POST /api/parking-sessions/{id}/payments`: Khách trả trước phí đỗ xe (Ví / QR).
+- `POST /api/staff/sessions/{id}/payments/cash`: Thu tiền mặt tại cổng.
+- `POST /api/staff/sessions/{id}/payments/online`: Tạo QR động tại cổng.
+- `GET /api/payments/vnpay/return`, `GET /api/payments/vnpay/ipn`: Xử lý kết quả cổng thanh toán.
+
+#### 5. Những Phần Còn Thiếu Để Xây Dựng API Ghi Nhận Doanh Thu Theo Scope Anh Hậu:
+Theo yêu cầu từ anh Hậu:
+> “Làm API khi user thanh toán xong thì tiền cập nhật vào doanh thu của bãi đỗ, thằng manager xem dashboard thấy bãi đã có doanh thu.”
+
+Tại trạng thái baseline, các khoảng trống kỹ thuật cụ thể là:
+1. **Thiếu API phía Backend để Dashboard Manager đọc doanh thu:**
+   - Manager Console trên Frontend (`ManagerConsolePage.tsx`) gửi request lấy doanh thu hôm nay nhưng Backend chưa có endpoint nào để phản hồi. Khi tắt mock, trang web lập tức bị lỗi hoặc hiển thị rỗng.
+2. **Thiếu cơ chế liên kết sự kiện thanh toán $\rightarrow$ doanh thu bãi đỗ:**
+   - Cần một API hoặc phương thức dịch vụ chuyên trách xác nhận: Khi một giao dịch thanh toán (cọc hoặc phí đỗ) chuyển sang trạng thái `Succeeded`, sự kiện này cập nhật vào chỉ số doanh thu của bãi đỗ xe liên quan.
+3. **Thiếu kết nối API thật trên Frontend:**
+   - Frontend Manager Console vẫn đang cấu hình sử dụng `reportMock`. Cần chuyển đổi sang gọi API thật sau khi Backend có API sẵn sàng.
+
+---
+
+### 15.5. Các Giả Định, Điểm Chưa Rõ & Quyết Định Kiến Trúc Cần Xác Nhận (Architectural Decisions & Unknowns)
+
+Trước khi tiến hành thiết kế chi tiết và cài đặt mã nguồn mới, cần làm rõ 3 quyết định kiến trúc then chốt:
+
+1. **Quyết định 1: Bản chất của "API Doanh thu" mà anh Hậu yêu cầu:**
+   - *Hướng tiếp cận A (Aggregation Query API):* Xây dựng API báo cáo gọn nhẹ (ví dụ `GET /api/manager/lots/{lotId}/revenue/today` hoặc `GET /api/reports/revenue/by-lot`) để khi Manager tải Dashboard, API này truy vấn trực tiếp từ bảng `Payments` các khoản thanh toán có `Status = Succeeded` của bãi đó để tính tổng doanh thu.
+     - *Ưu điểm:* Dữ liệu luôn chính xác 100%, bảo toàn tính bất biến tài chính (`NFR-08`), không lo lệch số khi có hoàn tiền hoặc hủy giao dịch.
+   - *Hướng tiếp cận B (Stateful Revenue Mutation / Event API):* Bổ sung một cột tích lũy (hoặc bảng số dư `LotDailyRevenue`) và tạo API/Hook `POST /api/lots/{id}/revenue/record` để cộng dồn tiền mỗi khi thanh toán thành công.
+     - *Rủi ro:* Cần cơ chế xử lý đồng thời (concurrency lock), có nguy cơ lệch sổ khi hoàn tiền (`Refund`), và không có trong thiết kế gốc của SRS v1.3.
+   - `[HYPOTHESIS]` Hướng tiếp cận A là giải pháp chuẩn mực và an toàn nhất cho kiến trúc N-Tier của dự án.
+2. **Quyết định 2: Phạm vi vai trò và Phân quyền Bãi xe (Manager Authorization Scope):**
+   - Quản lý chỉ được xem doanh thu của bãi xe mà mình phụ trách (`ParkingLots.ManagerUserId == currentUserId`).
+   - `[FACT]` Trong CSDL hiện tại, bãi `LOT-FPTU-01` (Id: 1) gán cho `manager@test.com`, trong khi bãi `LOT-CONGHOA-01` (Id: 3) có `ManagerUserId = NULL`. Để Manager thấy doanh thu bãi sau khi khách test thanh toán, kịch bản test bắt buộc phải diễn ra trên bãi mà Manager đó phụ trách, hoặc Admin phải phân quyền Manager vào bãi đó trước.
+3. **Quyết định 3: Xử lý phương thức thanh toán Ví trên Giao diện:**
+   - `ManagerConsolePage.tsx` baseline hiện chỉ tách dòng hiển thị cho VietQR và Tiền mặt. Cần xác nhận có bổ sung hiển thị thêm doanh thu từ Ví (`Wallet`) vào dòng chú thích thẻ KPI hay không.
+
+---
+
+### 15.6. Danh Mục Bằng Chứng Kiểm Toán Baseline (Baseline Audit Traceability Matrix)
+
+| Hạng mục kiểm toán | Tệp tin / Lệnh thực hiện | Kết quả thực tế kiểm chứng | Phân loại |
+| :--- | :--- | :--- | :--- |
+| **Trạng thái Git Backend** | `git -C parking-management-system status` | Clean (`nothing to commit, working tree clean`, commit `2cf5eb1`). | `[FACT]` |
+| **Trạng thái Git Frontend** | `git -C parking-management-system-frontend status` | Clean (`nothing to commit, working tree clean`, commit `f0d6a00`). | `[FACT]` |
+| **Khôi phục DI Backend** | `src/PMS.Application/OperationsDependencyInjection.cs` | Trở về 45 dòng gốc, không còn `IRevenueReportService`. | `[FACT]` |
+| **Xóa bỏ Controller Báo cáo** | `src/PMS.API/Controllers/ReportsController.cs` | Tệp tin không còn tồn tại trên ổ đĩa. | `[FACT]` |
+| **Biên dịch Backend** | `dotnet build PMS.sln` | Thành công 100% (0 Lỗi, 0 Cảnh báo). | `[FACT]` |
+| **Kiểm thử Đơn vị Baseline** | `dotnet test tests/PMS.Application.UnitTests` | **397/397 Tests PASS** (100%). | `[FACT]` |
+| **Biên dịch Frontend** | `npm run build` | Thành công 100% trong 15.12s. | `[FACT]` |
+| **Khôi phục Router Frontend** | `src/router.tsx` & `src/components/layout/adminNav.ts` | Không còn route và menu `/management/revenue`. | `[FACT]` |
+| **Khôi phục Mock Service** | `.env.example` & `src/config/env.ts` | Trở về mặc định `reports` sử dụng mock data. | `[FACT]` |
+| **Schema Bãi đỗ xe** | `PMS.Core/Entities/ParkingLot.cs` | Không có trường lưu số dư doanh thu. | `[FACT]` |
