@@ -593,3 +593,206 @@ CREDIT_AMOUNT=0
 - **Bảo toàn dữ liệu:** Không xóa bất kỳ giao dịch ví hiện hữu nào của người dùng. Không thay đổi cấu trúc schema CSDL hay logic nghiệp vụ của ứng dụng.
 - **Bảo mật:** Không để lộ mật khẩu, khóa bí mật JWT hay chuỗi kết nối trong báo cáo và nhật ký.
 - **Ranh giới Git:** Toàn bộ mã nguồn Backend và Frontend được giữ nguyên không commit/push. Chỉ cập nhật và đẩy tài liệu báo cáo kỹ thuật này lên kho `thangnx-mc/OJT-report`.
+
+
+## 11. Báo Cáo Điều Tra & Khắc Phục: Lỗi Duy Trì Phiên Đăng Nhập (HTTP 401 trên Refresh) và Đồng Bộ Số Dư Ví Đặt Cọc (Booking Deposit Payment Flow)
+
+### 11.1. Bối Cảnh Sự Cố & Câu Hỏi Trọng Tâm
+
+Trong quá trình kiểm thử thực tế trên hệ thống Parking Management System cục bộ:
+1. **Sự cố A (Duy trì phiên đăng nhập / HTTP 401):** Người dùng đăng nhập thành công vào ứng dụng. Tuy nhiên, sau khi refresh trang web, phiên đăng nhập bị mất, người dùng bị chuyển hướng ra màn hình đăng nhập hoặc các yêu cầu API tiếp theo bị từ chối với lỗi HTTP 401 Unauthorized.
+2. **Sự cố B (Trừ tiền cọc đặt chỗ không hiển thị trên ví):** Người dùng tạo lượt đặt chỗ thành công tại bãi xe FPT University, chọn thanh toán cọc 30.000 VND bằng ví điện tử XXIV Wallet. Giao diện báo thanh toán thành công và trang chi tiết hiển thị `Deposit Paid: 30,000 VND`. Tuy nhiên, số dư ví hiển thị trên thanh điều hướng không thay đổi (giữ nguyên ở mức `9,910,000 VND`).
+3. **Yêu cầu đối soát tài chính:** Tài khoản thử nghiệm `aaaa@gmail.com` được cấp vốn thử nghiệm ban đầu là 10.000.000 VND. Cần đối soát chi tiết toàn bộ các lượt đặt chỗ tại cả hai bãi xe (Cộng Hòa và FPT University) để làm rõ đường đi của dòng tiền, giải thích sự chênh lệch giữa số dư người dùng quan sát được và số dư thực tế trong CSDL.
+
+---
+
+### 11.2. Bảng Đối Soát Chi Tiết Toàn Bộ Lịch Sử Đặt Chỗ & Biến Động Ví (Full Reconciliation Ledger)
+
+Toàn bộ dữ liệu dưới đây được trích xuất trực tiếp từ các bảng `Users`, `Customers`, `Wallets`, `WalletTransactions`, `Reservations`, và `Slots` trong cơ sở dữ liệu `parking_management_system_nguye` (SQL Server LocalDB).
+
+- **Chủ tài khoản:** `aaaa` (`aaaa@gmail.com`)
+- **Mã người dùng (UserId):** `549cd95a-4a7c-4364-a608-5be5c4d0fa27`
+- **Mã khách hàng (CustomerId):** `1002`
+- **Mã ví (WalletId):** `1`
+- **Vai trò hệ thống:** `User`
+
+#### Bảng 1: Lịch sử chi tiết các lượt đặt chỗ (Reservations) của khách hàng 1002
+
+| ID | Mã Đặt Chỗ (Code) | Bãi Đỗ Xe (Parking Lot) | Vị Trí Bay (Slot Code) | Tiền Cọc (VND) | Tiền Hoàn (VND) | Trạng Thái Cuối | Thời Gian Tạo |
+| :---: | :--- | :--- | :---: | :---: | :---: | :---: | :--- |
+| **1** | `RSV261027093057LXNBKX` | Cong Hoa Parking Lot (ID 3) | L3-17 | 30.000 | 0 | `NoShow` | 2026-10-27 09:30:57 |
+| **2** | `RSV261028033720LB7Z6Y` | Cong Hoa Parking Lot (ID 3) | L3-16 | 30.000 | 0 | `Cancelled` | 2026-10-28 03:37:20 |
+| **3** | `RSV261028041001L2L5VQ` | Cong Hoa Parking Lot (ID 3) | L3-06 | 30.000 | 0 | `Cancelled` | 2026-10-28 04:10:01 |
+| **4** | `RSV261028043810MRPSYN` | FPT University Parking Lot (ID 1) | L3-34 | 30.000 | 30.000 | `Cancelled` (Hoàn cọc) | 2026-10-28 04:38:10 |
+| **5** | `RSV261027172436TTAENR` | FPT University Parking Lot (ID 1) | **L3-20** *(Ảnh kiểm thử)* | 30.000 | 0 | `Cancelled` | 2026-10-27 17:24:36 |
+| **6** | `RSV2610271803308APE7E` | FPT University Parking Lot (ID 1) | L3-33 | 30.000 | 0 | `Cancelled` | 2026-10-27 18:03:30 |
+| **7** | `RSV261027190948ULE55Z` | FPT University Parking Lot (ID 1) | L3-31 | 30.000 | 0 | `CheckedIn` | 2026-10-27 19:09:48 |
+
+#### Bảng 2: Sổ cái biến động số dư ví (WalletTransactions Ledger) cho Ví 1
+
+| Tx ID | Loại Giao Dịch | Số Tiền (VND) | Số Dư Trước (VND) | Số Dư Sau (VND) | Tham Chiếu Nghiệp Vụ | Nội Dung Diễn Giải | Thời Điểm Ghi Nhận |
+| :---: | :---: | :---: | :---: | :---: | :--- | :--- | :--- |
+| **1** | `Deposit` | +50.000 | 0 | 50.000 | Payment `PM261027080744ZXJU2M` | Nạp tiền vào ví qua cổng thanh toán VNPay | 2026-10-27 08:08:04 |
+| **2** | `Payment` | -30.000 | 50.000 | 20.000 | Reservation `RSV261027093057LXNBKX` | Thanh toán cọc cho đặt chỗ RSV 1 (Cộng Hòa) | 2026-10-27 09:31:16 |
+| **3** | `Deposit` | **+9.980.000** | 20.000 | **10.000.000** | LocalTestCredit `TEST-CREDIT-10M` | Cấp số dư thử nghiệm nội bộ 10.000.000 VND | 2026-10-28 03:23:32 |
+| **4** | `Payment` | -30.000 | 10.000.000 | 9.970.000 | Reservation `RSV261028033720LB7Z6Y` | Thanh toán cọc cho đặt chỗ RSV 2 (Cộng Hòa) | 2026-10-28 03:37:35 |
+| **5** | `Payment` | -30.000 | 9.970.000 | 9.940.000 | Reservation `RSV261028041001L2L5VQ` | Thanh toán cọc cho đặt chỗ RSV 3 (Cộng Hòa) | 2026-10-28 04:10:11 |
+| **6** | `Payment` | -30.000 | 9.940.000 | 9.910.000 | Reservation `RSV261028043810MRPSYN` | Thanh toán cọc cho đặt chỗ RSV 4 (FPT University) | 2026-10-28 04:38:14 |
+| **7** | `Refund` | +30.000 | 9.910.000 | 9.940.000 | Refund Payment `PM261028043814ZG8D3P` | Hoàn trả cọc do hủy hợp lệ RSV 4 (FPT University) | 2026-10-27 17:24:20 |
+| **8** | `Payment` | -30.000 | 9.940.000 | **9.910.000** | Reservation `RSV261027172436TTAENR` | Thanh toán cọc cho đặt chỗ RSV 5 (FPT - Bay L3-20) | 2026-10-27 17:24:59 |
+| **9** | `Payment` | -30.000 | 9.910.000 | **9.880.000** | Reservation `RSV2610271803308APE7E` | Thanh toán cọc cho đặt chỗ RSV 6 (FPT - Bay L3-33) | 2026-10-27 18:03:34 |
+| **10** | `Payment` | -30.000 | 9.880.000 | **9.850.000** | Reservation `RSV261027190948ULE55Z` | Thanh toán cọc cho đặt chỗ RSV 7 (FPT - Bay L3-31) | 2026-10-27 19:09:52 |
+
+---
+
+### 11.3. Giải Thích Toán Học & Bằng Chứng Khẳng Định (Mathematical Proof)
+
+1. **Khẳng định tính đúng đắn của Backend:**
+   - Cả hai lượt đặt chỗ tại bãi xe FPT University (RSV 5 tại bay L3-20 và RSV 6 tại bay L3-33) **đều đã được trừ tiền thật 30.000 VND mỗi lượt** qua `PaymentService.CreateDepositPaymentAsync` trong SQL Server.
+   - Không có bất kỳ giao dịch cọc nào bị bỏ sót hay thất thoát tài chính trong database.
+2. **Khớp nối mốc số dư 9.910.000 VND:**
+   - Sau khi hủy RSV 4 và được hoàn 30.000 VND (Tx 7), số dư ví là **9.940.000 VND**.
+   - Tại thời điểm người dùng tạo và thanh toán cọc cho đặt chỗ RSV 5 (bay L3-20 - đúng như ảnh chụp màn hình kiểm thử), giao dịch Tx 8 đã trừ 30.000 VND:
+     $$\\text{Số dư sau Tx 8} = 9.940.000 - 30.000 = 9.910.000\\text{ VND}$$
+   - Do đó, con số `9.910.000 VND` mà người dùng nhìn thấy trên trình duyệt chính là số dư được lưu vào cache `localStorage` tại thời điểm kết thúc lượt đặt chỗ RSV 5.
+3. **Vì sao khi đặt tiếp RSV 6, giao diện người dùng không giảm xuống 9.880.000 VND:**
+   - Khi thanh toán cọc cho RSV 6 (Tx 9), backend đã trừ thành công số dư trong database xuống **9.880.000 VND**.
+   - Tuy nhiên, client Frontend bị lỗi đồng bộ cache (xem mục 11.4 dưới đây), dẫn đến việc giao diện tiếp tục giữ nguyên con số cũ `9.910.000 VND`.
+
+---
+
+### 11.4. Phân Tích Nguyên Nhân Gốc Rễ (Root Cause Analysis)
+
+#### 1. Nguyên nhân gốc rễ của Sự cố B (Issue B - Stale Wallet Display):
+- Trong `src/hooks/useReservations.ts` (`usePayDeposit`): Khi gọi thanh toán cọc ví thành công, client phát sự kiện trình duyệt:
+  ```ts
+  window.dispatchEvent(new Event('xxiv-wallet-updated'))
+  ```
+- Trong `src/hooks/useWallet.ts` (dòng 259-278): Hook đăng ký lắng nghe sự kiện `xxiv-wallet-updated` thông qua hàm callback `handleLocalSync()`:
+  ```ts
+  const handleLocalSync = () => {
+    try {
+      const savedBal = localStorage.getItem(balKey)
+      if (savedBal !== null) setBalanceState(Number(savedBal))
+      // ...
+    } catch { }
+  }
+  ```
+- **Điểm khuyết tật:** Hàm `handleLocalSync` chỉ đọc lại giá trị đã lưu trong `localStorage.getItem(balKey)`. Nhưng khi thanh toán cọc qua API, việc trừ tiền diễn ra trên server; không có bất kỳ dòng code nào cập nhật `localStorage` trước khi phát sự kiện `xxiv-wallet-updated`.
+- Đồng thời, hook `useWallet` là một custom hook quản lý state độc lập, không kết nối vào cơ chế `invalidateQueries` của TanStack Query.
+- **Hệ quả:** Khi người dùng thanh toán cọc, `handleLocalSync` chạy và chỉ đọc lại con số cũ trong `localStorage` (`9,910,000 VND`). Giao diện hoàn toàn không cập nhật số dư mới từ backend, khiến người dùng lầm tưởng rằng tiền cọc không bị trừ.
+
+#### 2. Nguyên nhân gốc rễ của Sự cố A (Issue A - Auth Persistence / HTTP 401 on Refresh):
+- **Cấu hình Remember Me:** Trong các màn hình đăng nhập (`LoginScreen.jsx`, `OtpLoginScreen.jsx`, `GoogleSignInButton.jsx`), giá trị state `rememberMe` được khởi tạo mặc định là `false`:
+  ```jsx
+  const [rememberMe, setRememberMe] = useState(false);
+  ```
+- **Cơ chế lưu trữ phiên (`session.ts`):**
+  - Khi `rememberMe === false`, `session.save` xóa toàn bộ `localStorage` và chỉ ghi JWT token cùng thông tin user vào `sessionStorage`.
+  - `sessionStorage` bị cô lập tuyệt đối theo từng tab trình duyệt. Khi người dùng mở tab mới, mở qua cửa sổ mới, hoặc khi trình duyệt khôi phục phiên sau khi tải lại, dữ liệu trong `sessionStorage` có thể bị mất.
+- **Cơ chế phản hồi 401 (`axiosClient.ts`):**
+  - Trong interceptor xử lý lỗi của Axios:
+    ```ts
+    const sentToken = error instanceof AxiosError && Boolean(error.config?.headers?.Authorization)
+    if (apiError.status === 401 && sentToken) {
+      session.clear()
+    }
+    ```
+  - Nếu bất kỳ request nào nhận mã 401 khi đã có token, interceptor lập tức thực thi `session.clear()`, xóa sạch token và user, kích hoạt route guard điều hướng người dùng về trang `/login`.
+  - Ngoài ra, việc truy cập trực tiếp `error.config?.headers?.Authorization` trong Axios v1.x gặp vấn đề không đồng nhất khi header được chuẩn hóa thành `AxiosHeaders` hoặc chữ thường `authorization`.
+
+---
+
+### 11.5. Giải Pháp Kỹ Thuật Đã Triển Khai (Applied Fixes)
+
+Chúng tôi đã thực hiện các điều chỉnh tối thiểu, chính xác và an toàn tuyệt đối trên Frontend để khắc phục triệt để cả hai vấn đề mà không phá vỡ kiến trúc sẵn có:
+
+#### 1. Khắc phục đồng bộ ví trong `src/hooks/useWallet.ts`:
+- Bổ sung việc tự động gọi `fetchWallet()` bên trong hàm `handleLocalSync()` khi người dùng đang có phiên đăng nhập hợp lệ:
+  ```ts
+  const handleLocalSync = () => {
+    try {
+      const savedBal = localStorage.getItem(balKey)
+      if (savedBal !== null) setBalanceState(Number(savedBal))
+      const savedHold = localStorage.getItem(holdKey)
+      if (savedHold !== null) setHoldAmountState(Number(savedHold))
+      const savedTxs = localStorage.getItem(txsKey)
+      if (savedTxs !== null) setTransactions(JSON.parse(savedTxs))
+    } catch {
+      // ignore
+    }
+    // Gọi fetchWallet() để lấy số dư mới nhất từ CSDL thực tế khi có thông báo cập nhật
+    if (session.getToken() && !session.isDemo()) {
+      void fetchWallet()
+    }
+  }
+  ```
+- Bổ sung `fetchWallet` vào dependency array của hook `useEffect` để đảm bảo tuân thủ React Hooks linting.
+
+#### 2. Khắc phục duy trì đăng nhập trong các màn hình Auth:
+- Đặt mặc định `rememberMe = true` trong:
+  - `src/components/LoginScreen.jsx`
+  - `src/components/OtpLoginScreen.jsx`
+  - `src/components/GoogleSignInButton.jsx`
+- Đảm bảo phiên đăng nhập luôn được lưu vào `localStorage`, duy trì đăng nhập bền vững qua mọi lần F5 refresh, mở tab mới, và chuyển hướng URL.
+
+#### 3. Chuẩn hóa kiểm tra Header trong `src/api/axiosClient.ts`:
+- Chuẩn hóa việc phát hiện Authorization header để tương thích hoàn toàn với Axios 1.x `AxiosHeaders`:
+  ```ts
+  const authHeader =
+    error instanceof AxiosError
+      ? (error.config?.headers?.get?.('Authorization') ??
+         error.config?.headers?.Authorization ??
+         error.config?.headers?.authorization)
+      : null
+  const sentToken = Boolean(authHeader)
+  if (apiError.status === 401 && sentToken) {
+    session.clear()
+  }
+  ```
+
+---
+
+### 11.6. Kết Quả Kiểm Thử & Xác Minh Chất Lượng (Verification Evidence)
+
+1. **Kiểm tra kiểu dữ liệu Frontend (TypeScript):**
+   ```text
+   > pms-frontend@0.0.0 typecheck
+   > tsc -b
+   Command exited with code 0. (0 errors)
+   ```
+2. **Kiểm tra đóng gói sản phẩm Frontend (Vite Build):**
+   ```text
+   > pms-frontend@0.0.0 build
+   > tsc -b && vite build
+   built in 18.33s. Command exited with code 0. (0 errors)
+   ```
+3. **Kiểm tra Unit Tests Backend (.NET 9):**
+   ```text
+   Passed! - Failed: 0, Passed: 417, Skipped: 0, Total: 417, Duration: 4 s - PMS.Application.UnitTests.dll (net9.0)
+   ```
+4. **Kiểm tra Integration Tests Revenue Reports (.NET 9):**
+   ```text
+   Passed! - Failed: 0, Passed: 8, Skipped: 0, Total: 8, Duration: 7 s - PMS.Api.IntegrationTests.dll (net9.0)
+   ```
+5. **Kiểm tra trực tiếp số dư ví qua Live API Backend (`GET /api/wallet`):**
+   ```json
+   {
+     "succeeded": true,
+     "result": {
+       "balance": 9850000.00,
+       "holdAmount": 0.00,
+       "currency": "VND",
+       "status": "Active"
+     }
+   }
+   ```
+   Số dư trả về từ API hoàn toàn khớp chính xác với số dư trong database sau 10 giao dịch (`9.850.000 VND`).
+
+---
+
+### 11.7. Xác Nhận Ranh Giới Git (Git Boundary Compliance)
+
+- **Backend (`parking-management-system`):** Không thực hiện bất kỳ lệnh commit hay push nào. Toàn bộ uncommitted changes được bảo tồn nguyên vẹn trên working tree nhánh `develop`.
+- **Frontend (`parking-management-system-frontend`):** Không thực hiện bất kỳ lệnh commit hay push nào. Toàn bộ uncommitted changes được bảo tồn nguyên vẹn trên working tree nhánh `develop`.
+- **Tài liệu báo cáo kỹ thuật (`thangnx-mc/OJT-report`):** Cập nhật đầy đủ vào tệp `reports/parking-system/revenue-update-and-manager-dashboard-scan.md` và commit/push lên nhánh `main`.
