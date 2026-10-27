@@ -797,3 +797,194 @@ Qua toàn bộ chuỗi chứng cứ kỹ thuật, nguyên nhân khiến Dashboar
 | Logic lọc bãi theo Manager trên Backend | `src/PMS.Application/Services/Impl/RevenueReportService.cs` | Dòng 379–414 (`ApplyLotFilter` và `ValidateManagerLotAccess`). |
 | Logic chọn bãi hiển thị trên Frontend Manager | `src/contexts/ManagerLotContext.tsx` | Dòng 50–75 (`lots.filter(l => l.managerUserId === user.userId)`). |
 | Khiếm khuyết bỏ quên Ví trong chú thích KPI | `src/pages/management/ManagerConsolePage.tsx` | Dòng 64–65 và 172–175 (chỉ đọc `QR_BANKING` và `CASH`, bỏ qua `RFID_WALLET`). |
+
+
+---
+
+## 14. Payment Flow Audit and Final Task Scope
+
+### 14.1. Bối Cảnh và Mục Tiêu Rà Soát (Context & Objectives)
+- **Nhiệm vụ được giao:** Đảm bảo khi người dùng thanh toán tiền cho vị trí đặt trước hoặc phiên đỗ xe (qua Ví Park Wallet hoặc QR ngân hàng), số tiền phải được ghi nhận vào doanh thu của bãi đỗ xe tương ứng, và Quản lý (Manager) phụ trách bãi đó phải nhìn thấy doanh thu tăng lên trên Dashboard.
+- **Vấn đề đặt ra:** Cần xác định chính xác tất cả các cơ chế/luồng thanh toán trong mã nguồn hiện tại (cả nạp ví, cọc, phí theo thời lượng, quét QR trực tiếp, tiền mặt, hoàn tiền, hủy cọc, no-show) để đưa ra phạm vi triển khai tối thiểu, đúng đắn nhất, không tạo thừa API, không phá vỡ kiến trúc tài chính bất biến, và không can thiệp/ghi đè lên phần việc Báo cáo Doanh thu thuộc quyền sở hữu của thành viên khác trong nhóm.
+- **Phương pháp kiểm toán:** Read-only toàn bộ mã nguồn Backend, Frontend và các tài liệu đặc tả nguồn (`SRS v1.3`, `Implementation Plan`), phân loại minh bạch giữa sự thật được kiểm chứng (`[FACT]`), suy luận kỹ thuật (`[INFERENCE]`) và câu hỏi mở (`[UNKNOWN]`).
+
+---
+
+### 14.2. Bảng Tổng Kê Chi Tiết Mọi Luồng Thanh Toán và Thu Tiền (Payment Path Inventory Table)
+
+Bảng dưới đây truy vết đầy đủ 12 luồng giao dịch tài chính hiện hữu trong hệ thống:
+
+| # | Kênh thanh toán & Trường hợp nghiệp vụ | Giao diện Frontend & Thao tác Actor | API Endpoint & Payload | Controller & Service xử lý | Thời điểm trừ tiền / Gateway xác nhận | Thời điểm tạo Payment & đạt Succeeded | Trạng thái Reservation / Session / Invoice | Cơ chế xác định ParkingLotId | Đóng góp vào Tổng hợp Doanh thu Bãi đỗ |
+| :-: | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **1** | **Đặt cọc giữ chỗ qua Ví Park Wallet** | `CustomerBookingsPage.tsx` hoặc `ReserveBayPanel.tsx`: Chọn slot, bấm "Pay via Wallet". | `POST /api/reservations/{id}/payments`<br>`{"provider": "Wallet"}` | `ReservationsController.PayDepositAsync`<br>$\rightarrow$ `PaymentService.CreateDepositPaymentAsync` | Trừ tức thời số dư `wallet.Balance` trong cùng DB transaction. | Tạo bản ghi `Payment` và gán ngay `Status = Succeeded`, `PaidAt = Now`. | `Reservation`: `Confirmed`<br>`Invoice`: `Paid`<br>Tạo `WalletTransaction` (`-Amount`). | Lấy trực tiếp từ `reservation.ParkingLotId`. | `[FACT]` **Có ghi nhận.** Thỏa mãn `Status == Succeeded`, `Purpose == Deposit`, `ParkingLotId != null`. |
+| **2** | **Đặt cọc giữ chỗ qua QR Ngân hàng / VNPay / MoMo** | `CustomerBookingsPage.tsx` hoặc `SessionCards.tsx`: Bấm "VNPay" hoặc "MoMo" $\rightarrow$ Quét VietQR. | `POST /api/reservations/{id}/payments`<br>`{"provider": "VNPay", "returnUrl": "..."}` | `ReservationsController.PayDepositAsync`<br>$\rightarrow$ `PaymentService.CreateDepositPaymentAsync`<br>$\rightarrow$ `StartCheckoutAsync` | Khách quét QR thanh toán tại App Ngân hàng $\rightarrow$ Gateway gọi IPN/Return webhook. | Khởi tạo: `Status = Pending`.<br>Khi Gateway callback thành công (`ApplyAsync`): chuyển sang `Status = Succeeded`, `PaidAt = Now`. | `Reservation`: `PendingDeposit` $\rightarrow$ `Confirmed`<br>`Invoice`: `Unpaid` $\rightarrow$ `Paid`. | Gán `reservation.ParkingLotId` từ lúc tạo link thanh toán, giữ nguyên khi `Succeeded`. | `[FACT]` **Có ghi nhận.** Tăng doanh thu bãi đỗ ngay khi Gateway xác nhận thành công. |
+| **3** | **Thanh toán phí đỗ theo thời gian qua Ví (App Prepay)** | `CustomerDashboardPage.tsx` $\rightarrow$ `SessionCards.tsx`: Thấy số tiền chạy theo giờ, bấm "Prepay Wallet". | `POST /api/parking-sessions/{id}/payments`<br>`{"provider": "Wallet"}` | `ParkingSessionsController.PayAsync`<br>$\rightarrow$ `GateService.PayMySessionAsync`<br>$\rightarrow$ `PaymentService.CreateSessionPaymentAsync` | Trừ tức thời số dư `wallet.Balance` của khách hàng. | Tạo `Payment` và gán ngay `Status = Succeeded`, `PaidAt = Now`. | `Session`: `Paid`, cấp `ExitWindowEndsAt` (Now + 15p)<br>`Invoice`: `Paid`<br>`WalletTransaction`: `-Amount`. | Lấy trực tiếp từ `session.ParkingLotId`. | `[FACT]` **Có ghi nhận.** Thỏa mãn `Status == Succeeded`, `Purpose == ParkingFee`, `ParkingLotId != null`. |
+| **4** | **Thanh toán phí đỗ theo thời gian qua QR Ngân hàng (App Prepay)** | `SessionCards.tsx`: Bấm "Prepay VNPay/MoMo" $\rightarrow$ Mở trang thanh toán Gateway $\rightarrow$ Quét QR. | `POST /api/parking-sessions/{id}/payments`<br>`{"provider": "VNPay", "returnUrl": "..."}` | `ParkingSessionsController.PayAsync`<br>$\rightarrow$ `GateService.PayMySessionAsync`<br>$\rightarrow$ `PaymentService.CreateSessionPaymentAsync` | Khách thanh toán qua App Ngân hàng $\rightarrow$ Gateway xác nhận qua IPN/Return. | Khởi tạo: `Status = Pending`.<br>Khi IPN callback xác nhận: `Status = Succeeded`, `PaidAt = Now`. | `Session`: `Active` $\rightarrow$ `Paid`, mở Exit Window 15 phút.<br>`Invoice`: `Paid`. | Lấy trực tiếp từ `session.ParkingLotId`. | `[FACT]` **Có ghi nhận.** Doanh thu tăng ngay khi Gateway xác nhận thành công. |
+| **5** | **Thu tiền mặt tại làn ra / quầy thu phí (Staff Cash POS)** | `StaffCheckoutPage.tsx`: Nhân viên nhập biển số, tra cứu số tiền, nhấn F5 thu tiền mặt. | `POST /api/staff/sessions/{id}/payments/cash`<br>`{"amount": 50000, "prepaid": false}` | `StaffGateController.PayCashAsync`<br>$\rightarrow$ `GateService.PayCashAsync`<br>$\rightarrow$ `PaymentService.RecordCashAsync` | Nhân viên cầm tiền mặt trực tiếp từ tài xế tại bốt kiểm soát. | Tạo `Payment` phương thức `Cash`, gán ngay `Status = Succeeded`, `PaidAt = Now`, lưu `CollectedByUserId`. | `Session`: `Paid`<br>`Invoice`: `Paid`<br>Barie mở cho xe ra. | Lấy trực tiếp từ `session.ParkingLotId`. | `[FACT]` **Có ghi nhận.** Phân loại thành phương thức `CASH` trong báo cáo doanh thu bãi đỗ. |
+| **6** | **Tạo QR động tại làn ra cho khách vãng lai (Staff Dynamic QR)** | `StaffCheckoutPage.tsx`: Nhân viên bấm "Show QR VNPay/MoMo" $\rightarrow$ Màn hình hiện QR cho khách quét. | `POST /api/staff/sessions/{id}/payments/online`<br>`{"provider": "VNPay", "prepaid": false}` | `StaffGateController.PayOnlineAsync`<br>$\rightarrow$ `GateService.PayOnlineAtLaneAsync`<br>$\rightarrow$ `PaymentService.CreateSessionPaymentAsync` | Khách dùng App Ngân hàng quét QR trên màn hình phụ tại bốt $\rightarrow$ IPN hoặc Staff bấm F8 Check. | Khởi tạo: `Status = Pending`, `Channel = Lane`.<br>Khi Gateway xác nhận: `Status = Succeeded`, `PaidAt = Now`. | `Session`: `Paid`<br>`Invoice`: `Paid`<br>Barie mở. | Lấy trực tiếp từ `session.ParkingLotId`. | `[FACT]` **Có ghi nhận.** Phân loại thành phương thức `QR_BANKING` trong báo cáo doanh thu bãi đỗ. |
+| **7** | **Nạp tiền vào Ví Park Wallet (Wallet Top-Up)** | `/me/wallet`: Khách nhập số tiền (vd 100.000đ), chọn VNPay/MoMo $\rightarrow$ Quét mã thanh toán. | `POST /api/wallet/topup`<br>`{"amount": 100000, "provider": "VNPay"}` | `WalletController.TopUpAsync`<br>$\rightarrow$ `PaymentService.CreateWalletTopUpPaymentAsync` | Tiền chuyển từ tài khoản ngân hàng khách hàng vào tài khoản Gateway của hệ thống. | Khởi tạo: `Status = Pending`.<br>Khi Gateway xác nhận: `Status = Succeeded`, cộng `wallet.Balance`. | `WalletTransaction`: `+Amount`<br>`Payment`: `Purpose = WalletTopUp`. | Gán `lotId` mặc định (bãi đầu tiên) để thỏa mãn schema CSDL. | `[FACT]` **KHÔNG ghi nhận vào doanh thu bãi đỗ.** `RevenueReportService` lọc chặt: chỉ nhận `Deposit` hoặc `ParkingFee`. (Đúng chuẩn kế toán: nạp ví là nghĩa vụ nợ, chưa phát sinh dịch vụ đỗ xe). |
+| **8** | **Phiên đỗ miễn phí / Được cấn trừ 100% tiền cọc (Zero-fee)** | Khách vào đỗ rồi ra trong thời gian cọc (phí đỗ $\le$ cọc), hoặc xe Whitelist. | `POST /api/staff/sessions/{id}/quote`<br>`POST /api/staff/sessions/{id}/check-out` | `GateService.QuoteAsync`<br>$\rightarrow$ `FeeCalculator.Settle` | Không phát sinh giao dịch tiền tệ mới tại làn ra. | Không tạo thêm bản ghi `Payment` mới (BR-09: 0 VND không tạo payment). | `Session.Status = Paid`, `ZeroFeeReason = CoveredByDeposit` hoặc `Whitelist`. | Thuộc về `session.ParkingLotId`. | `[FACT]` Doanh thu phiên đỗ = 0, nhưng tiền cọc trước đó đã được ghi nhận vào doanh thu bãi từ lúc đặt chỗ. Không tính trùng lặp. |
+| **9** | **Hoàn trả phần tiền cọc còn thừa khi xe rời bãi (Deposit Remainder Refund)** | Khi xe checkout, nếu phí đỗ thực tế < tiền cọc (vd phí 10k, cọc 30k $\rightarrow$ thừa 20k). | Tự động kích hoạt trong luồng `POST /api/staff/sessions/{id}/check-out`. | `GateService.CheckoutAsync`<br>$\rightarrow$ `PaymentService.RefundDepositAsync` | Tự động hoàn lại 20k vào Ví hoặc gửi yêu cầu hoàn tiền sang Gateway. | Bản ghi cọc cũ: cập nhật `RefundedAmount += 20000`.<br>Tạo bản ghi đối ứng `Payment` (`Purpose = Refund`). | `Reservation.RefundAmount += 20000`. | Thuộc về `reservation.ParkingLotId`. | `[FACT]` **Tự động khấu trừ doanh thu thuần.** Doanh thu ghi nhận thực tế của bãi từ giao dịch này giảm từ 30.000đ xuống còn đúng `30.000 - 20.000 = 10.000đ`. |
+| **10** | **Hủy đặt chỗ trước giờ hẹn (Cancellation Refund)** | Khách vào `/me/bookings`, bấm "Hủy đặt chỗ" trước giờ quy định (> 60 phút). | `POST /api/reservations/{id}/cancel`<br>`{"reason": "..."}` | `ReservationsController.CancelAsync`<br>$\rightarrow$ `ReservationService.CancelAsync`<br>$\rightarrow$ `PaymentService.RefundDepositAsync` | Tự động hoàn 100% tiền cọc về Ví hoặc Gateway. | Bản ghi cọc cũ: cập nhật `RefundedAmount = Amount`.<br>Tạo bản ghi `Purpose = Refund`. | `Reservation.Status = Cancelled`. | Thuộc về `reservation.ParkingLotId`. | `[FACT]` **Khấu trừ về 0.** Doanh thu thuần của bãi: `Amount - RefundedAmount = 0 VNĐ`. |
+| **11** | **Khách không đến nhận chỗ (No-Show Deposit Retention)** | Khách đặt chỗ, trả cọc nhưng quá thời gian giữ xe (Hold Window 15 phút) không check-in. | Background Cron Job chạy định kỳ: `ParkingJobs.MarkNoShowsAsync`. | `ParkingJobs.MarkNoShowsAsync`<br>$\rightarrow$ `ReservationService.EndAsync` | Không hoàn tiền; toàn bộ tiền cọc bị giữ lại làm phí phạt no-show theo `FR-RSV-05`. | Bản ghi cọc cũ giữ nguyên: `RefundedAmount = 0`, `Status = Succeeded`. | `Reservation.Status = NoShow`. Slot được giải phóng về trạng thái Trống (`Available`). | Thuộc về `reservation.ParkingLotId`. | `[FACT]` **Giữ nguyên 100% doanh thu cho bãi.** Bãi đỗ được hưởng trọn vẹn số tiền cọc (vd 30.000 VNĐ). |
+| **12** | **Xử lý Webhook trễ / Thanh toán trùng (Duplicate / Late Callback)** | Khách đã thanh toán tiền mặt tại quầy, sau đó link QR cũ mới báo thành công về server. | Gateway IPN/Return gọi tới `PaymentsController.VnPayIpnAsync` / `MoMoIpnAsync`. | `PaymentService.HandleCallbackAsync`<br>$\rightarrow$ `ApplyAsync`<br>$\rightarrow$ `RefundAsync` | Khóa `PaymentGates` (SemaphoreSlim) ngăn chặn xử lý song song; phát hiện phiên đã `Paid`. | Bản ghi thứ hai: cập nhật ngay `RefundedAmount = Amount`, `Status = Succeeded`. | Kích hoạt tự động hoàn tiền giao dịch thừa (`Duplicate payment refund`), báo alert cho Manager. | Thuộc về `session.ParkingLotId`. | `[FACT]` **Không bị tính trùng doanh thu.** Giao dịch trùng bị triệt tiêu doanh thu thuần (`NetAmount = 0`), doanh thu bãi chỉ ghi nhận đúng 1 lần từ giao dịch đầu tiên. |
+
+---
+
+### 14.3. Đối Chiếu Đặc Tả Nguồn Về Bản Chất Doanh Thu (Business Meaning of Revenue)
+
+Trích xuất trực tiếp từ các tài liệu đặc tả nguồn tại `C:\DEV\OJT-report\reports\parking-system\source-documents\`:
+
+#### 1. Các căn cứ đặc tả chính thức:
+- **Nguyên tắc bất biến tài chính (`SRS v1.3 Mục 2.3`, `Mục 7`, `Implementation Plan Mục 2`, `NFR-08`):**
+  - Giao dịch tài chính trong hệ thống là **bất biến (Immutable)**. Bảng `Payments` không được phép chỉnh sửa tùy tiện số tiền hay trạng thái sau khi đã chốt. Mọi điều chỉnh, hoàn tiền phải tạo bản ghi điều chỉnh liên kết.
+  - Mô hình dữ liệu tài chính tại **SRS Mục 7** quy định rõ gồm: `Payment`, `PaymentAdjustment`, `Receipt`, `Reconciliation`.
+  - **`[FACT]` Không có bất kỳ bảng "Số dư bãi xe" (`ParkingLotBalance`), "Sổ cái doanh thu" (`LotRevenueLedger`) hay cột `ParkingLots.Revenue` nào được định nghĩa trong SRS v1.3 hay Implementation Plan.**
+- **Yêu cầu Báo cáo Doanh thu (`SRS v1.3 FR-RPT-01, FR-RPT-02`, `Implementation Plan B1.10, UC-08`):**
+  - `FR-RPT-01`: Dashboard tổng quan hiển thị lượt xe, doanh thu, tỷ lệ lấp đầy cho Admin và Manager.
+  - `FR-RPT-02`: Báo cáo doanh thu đa chiều theo: ngày/tuần/tháng, bãi đỗ, loại xe, phương thức thanh toán.
+  - `Implementation Plan B1.10`: Doanh thu được tổng hợp từ dữ liệu giao dịch thực tế phục vụ Dashboard và Báo cáo.
+  - `Implementation Plan B3.5`: Chỉ ở Phase 3 (Tối ưu hóa quy mô lớn 50 bãi xe $\times$ 12 tháng) mới cần bổ sung bảng tổng hợp định kỳ (`DailyLotRevenueRollup`) nhằm đảm bảo thời gian tải $\le$ 3 giây (`NFR-02`). Ở Phase 1 MVP và Phase 2 hiện tại, truy vấn tổng hợp trực tiếp từ bảng giao dịch là hoàn toàn chuẩn mực.
+- **Quy tắc ghi nhận tiền cọc và thời lượng (`SRS FR-RSV-02, 03, 05, 06`, `FR-PAY-01..07`):**
+  - Tiền cọc đặt chỗ: Khách thanh toán cọc thành công mới xác nhận đặt chỗ. Khi xe vào bãi, tiền cọc được cấn trừ vào phí đỗ (`DepositApplied`).
+  - Hủy hợp lệ: Hoàn cọc 100%. Hủy muộn hoặc không đến (No-show): Giữ cọc tính vào thu nhập bãi.
+  - Phí theo thời lượng: Tính theo biểu phí bãi (Tariff: block đầu, block tiếp theo, giá trần ngày). Thu khi khách prepay trên app hoặc thanh toán tại quầy ra.
+
+#### 2. Phân định rõ ràng: Lưu bảng số dư riêng hay Truy vấn tổng hợp từ Payments?
+- **Câu hỏi cốt lõi:** Yêu cầu "tiền cập nhật vào doanh thu của bãi đỗ, manager thấy bãi có doanh thu" có đòi hỏi phải tạo bảng số dư doanh thu riêng cho từng bãi xe, hay chỉ cần các giao dịch thanh toán thành công được ghi nhận đúng `ParkingLotId` để API Báo cáo Doanh thu tổng hợp?
+- **Kết luận:** **Phương án 2 (Recording successful payments correctly so existing Revenue API can aggregate them) là phương án DUY NHẤT đúng đắn và tương thích với hệ thống.**
+  - **Lý do 1 (Tính duy nhất của nguồn chân lý - Single Source of Truth):** Trong hệ thống tài chính, doanh thu phải được tính toán từ các hóa đơn và chứng từ thanh toán có thật (`Payments`). Nếu duy trì thêm một cột `TotalRevenue` trên bảng `ParkingLots` hoặc tạo bảng số dư riêng và cộng dồn bằng mã lệnh, hệ thống sẽ ngay lập tức đối mặt với rủi ro lệch sổ (Data Desynchronization), race condition khi nhiều cổng cùng thu tiền, và mất khả năng giải trình/đối soát (`FR-PAY-05`).
+  - **Lý do 2 (Tuân thủ thiết kế hiện có):** Toàn bộ bộ API `ReportsController` (`/api/v1/reports/revenue/*`) đã được xây dựng hoàn chỉnh và kiểm thử tự động đạt 100% Pass, hoạt động dựa trên cơ chế tổng hợp động từ bảng `Payments`. Mọi khoản tiền có `Status == Succeeded`, `Purpose` hợp lệ và `ParkingLotId` chuẩn đều tự động phản ánh tức thì vào doanh thu bãi mà không cần bất kỳ bảng số dư phụ nào.
+
+---
+
+### 14.4. So Sánh Giữa Thanh Toán Ví (Park Wallet) và QR Ngân Hàng Trực Tiếp (Direct Bank QR)
+
+| Tiêu chí kỹ thuật | Thanh toán qua Ví Park Wallet | Thanh toán qua QR Ngân hàng (VNPay / MoMo) |
+| :--- | :--- | :--- |
+| **Bản chất dòng tiền** | Dòng tiền nội bộ: Khách đã nạp tiền từ trước vào ví hệ thống, khi trả cọc/phí chỉ diễn ra dịch chuyển số dư trong CSDL. | Dòng tiền ngoại vi: Khách dùng App Ngân hàng (VietQR) quét mã chuyển khoản trực tiếp qua Payment Gateway. |
+| **Tính đồng bộ (Synchronous vs Asynchronous)** | **Đồng bộ tuyệt đối (Synchronous):** Trừ ví, tạo `Payment`, đánh dấu `Succeeded`, đổi trạng thái Reservation/Session thành công ngay trong cùng một HTTP Request. | **Bất đồng bộ (Asynchronous):** Tạo `Payment` ở trạng thái `Pending`, sinh URL/QR $\rightarrow$ Khách quét mã $\rightarrow$ Gateway gọi webhook IPN / Return $\rightarrow$ Hệ thống mới xác nhận `Succeeded`. |
+| **Xử lý rủi ro trễ / Callback lặp lại** | Không có rủi ro callback trễ vì không phụ thuộc bên thứ ba. | Có cơ chế khóa luồng `PaymentGates` (SemaphoreSlim), kiểm tra chữ ký SHA256/HMAC, lọc `AlreadyProcessed` và tự động hoàn tiền nếu callback tới sau khi phiên đã đóng. |
+| **Phân loại trong Báo cáo Doanh thu** | Được ánh xạ thành nhóm phương thức **`RFID_WALLET`** (`RevenueReportService.cs#L125`). | Được ánh xạ thành nhóm phương thức **`QR_BANKING`** (`RevenueReportService.cs#L112`). |
+| **Ảnh hưởng đến Doanh thu Bãi đỗ** | Cả hai phương thức khi hoàn tất đều tạo ra bản ghi `Payment` hợp lệ với đầy đủ `ParkingLotId`, `PaidAt` và được tính vào doanh thu của bãi đỗ xe với trọng số bình đẳng $1 : 1$. |
+
+---
+
+### 14.5. Cơ Chế Tính và Thu Phí Đỗ Xe Theo Thời Gian (Time-Based Parking Fee Collection Flow)
+
+Khi một phương tiện vào đỗ trong bãi, dòng doanh thu theo thời gian được vận hành như sau:
+
+1. **Ghi nhận mốc thời gian vào (`EntryTime`):**
+   - Xe qua barie vào, camera ANPR nhận diện biển số, tạo `ParkingSession` với `EntryTime = Now`, `Status = Active`.
+2. **Tích lũy thời gian và định giá động (`FeeCalculator.Calculate`):**
+   - Khi khách hàng xem app hoặc khi xe tới làn ra, hệ thống gọi `GateService.QuoteAsync`.
+   - Áp dụng bảng giá của bãi (`Tariff`): Phí vào cổng (`EntryFee`) + Block đầu tiên (`FirstBlockMinutes` / `FirstBlockPrice`) + Các block tiếp theo (`BlockMinutes` $\times$ `BlockPrice`), áp mức trần ngày lịch (`MaxDailyFee`), làm tròn lên bội số 1.000 VNĐ (`RoundUp`).
+3. **Cấn trừ tiền cọc đặt trước (`FeeCalculator.Settle`):**
+   - Nếu phiên đỗ có liên kết với đặt chỗ (`ReservationId != null`), số tiền cọc đang giữ (`DepositHeld`) được tự động cấn trừ (`DepositApplied = Min(Deposit, TotalFee)`).
+   - Số tiền thực thu còn lại: `AmountDue = Max(0, TotalFee - DepositApplied - AlreadyPaid)`.
+4. **Thanh toán phí phát sinh (`Payment Creation`):**
+   - Nếu `AmountDue > 0`: Khách có thể thanh toán qua **App Prepay** (bấm chọn Ví hoặc VietQR) hoặc thanh toán tại **Làn ra** (Tiền mặt hoặc Quét QR bốt).
+   - Khi thanh toán thành công, hệ thống tạo bản ghi `Payment` với `Purpose = 'ParkingFee'`, `ParkingLotId = session.ParkingLotId`, `Amount = AmountDue`, `Status = 'Succeeded'`.
+   - Giao dịch này ngay lập tức cộng thêm vào doanh thu của bãi đỗ xe.
+5. **Cửa sổ rời bãi (Exit Window):**
+   - Nếu khách trả trước qua App (`App Prepay`), hệ thống cấp thời gian 15 phút (`ExitWindowEndsAt = Now + 15 phút`) và sinh mã Exit Pass mã hóa ký số để barie tự mở khi xe tới cổng ra mà không phải trả thêm tiền. Nếu quá 15 phút mới ra, hệ thống sẽ tính phí block phát sinh ngoài giờ.
+
+---
+
+### 14.6. Kiểm Toán Hiện Trạng Triển Khai Doanh Thu và Phân Định Quyền Sở Hữu (Ownership Audit)
+
+#### 1. Đối soát các nhận định lịch sử trong báo cáo cũ so với mã nguồn thực tế:
+- **Nhận định cũ:** *"Chưa có ReportsController phục vụ /api/v1/reports/*"* $\rightarrow$ **`[HISTORICAL]`** Đây là kết quả của lần quét ban đầu khi tính năng báo cáo chưa được viết. Hiện tại, `ReportsController.cs` và `RevenueReportService.cs` đã được triển khai hoàn chỉnh.
+- **Nhận định cũ:** *"Frontend cấu hình dùng mock data"* $\rightarrow$ **`[HISTORICAL]`** Đã được chuyển đổi sang API thật (`isMockService('reports') = false`), toàn bộ dữ liệu báo cáo trên giao diện hiện lấy từ Backend.
+- **Nhận định hiện tại:**
+  - `[FACT]` Giao dịch cọc 30.000 VNĐ của khách hàng `aaaa@gmail.com` đã được lưu tại `Payments` ID 2, gán đúng `ParkingLotId = 3`, `Status = Succeeded`, `Purpose = Deposit`.
+  - `[FACT]` Endpoint `GET /api/v1/reports/revenue/by-lot` khi gọi bằng tài khoản Admin trả về đúng 30.000 VNĐ cho Bãi 3.
+  - `[FACT]` Màn hình Manager Console hiển thị 0 VNĐ là do tài khoản `manager@test.com` chỉ được gán quản lý Bãi 1 (`FPT University Parking Lot`), trong khi Bãi 3 có `ManagerUserId = NULL`. Backend chặn truy cập dữ liệu chéo bãi theo đúng thiết kế bảo mật `FR-AUTH-07`.
+  - `[FACT]` Giao diện `ManagerConsolePage.tsx` hiện chỉ hiển thị doanh thu VietQR và Tiền mặt, bỏ quên nhóm phương thức Ví (`RFID_WALLET`).
+
+#### 2. Ranh giới sở hữu công việc (Ownership Boundaries):
+- **Phạm vi thuộc quyền sở hữu của thành viên khác (Báo cáo & Dashboard - KHÔNG CAN THIỆP):**
+  - Toàn bộ `src/PMS.API/Controllers/ReportsController.cs`.
+  - Toàn bộ `src/PMS.Application/Services/Impl/RevenueReportService.cs`.
+  - Các DTO báo cáo tại `src/PMS.Application/Models/Reports/`.
+  - Toàn bộ test suite liên quan đến báo cáo doanh thu (`RevenueReportServiceTests.cs`, `ReportsEndpointTests.cs`).
+  - Trang báo cáo Frontend `src/pages/admin/RevenueReportPage.tsx` và client `src/api/report.service.ts`.
+- **Phạm vi thuộc trách nhiệm của task được giao (Luồng Thanh toán & Ghi nhận Doanh thu):**
+  - Đảm bảo mọi giao dịch thanh toán thành công (dù qua Ví, VietQR hay Tiền mặt, cho cọc hay phí đỗ xe) đều được liên kết chính xác với `ParkingLotId`.
+  - Đảm bảo thời điểm ghi nhận (`PaidAt`) và trạng thái (`Succeeded`) được cập nhật chuẩn mực ngay khi tiền vào tài khoản/ví.
+  - Đảm bảo kịch bản kiểm thử tích hợp giữa tài khoản Quản lý và Bãi đỗ xe được phân quyền chính xác để Quản lý nhìn thấy doanh thu bãi của mình.
+
+---
+
+### 14.7. Xác Định Phạm Vi Triển Khai Tối Thiểu và Trả Lời 5 Câu Hỏi Cốt Lõi (Minimal Scope Answers)
+
+#### Câu 1: Có thực sự cần viết thêm bất kỳ API mới nào không?
+- **Trả lời: KHÔNG (No new API is needed).**
+- `[FACT]` Hệ thống đã có đầy đủ:
+  - API xử lý thanh toán cọc và phí đỗ: `POST /api/reservations/{id}/payments`, `POST /api/parking-sessions/{id}/payments`, `POST /api/staff/sessions/{id}/payments/cash`, `POST /api/staff/sessions/{id}/payments/online`.
+  - API báo cáo doanh thu bãi đỗ: `GET /api/v1/reports/revenue/by-lot`, `GET /api/v1/reports/revenue/kpi`, v.v.
+  - Các API thanh toán đã ghi nhận `ParkingLotId`, `PaidAt`, `Status = Succeeded` vào bảng `Payments`, và API báo cáo đã tự động đọc trực tiếp dữ liệu này ngay lập tức. Viết thêm một API "cập nhật doanh thu" (như `POST /api/revenue/update`) là hoàn toàn thừa thãi, sai nguyên tắc thiết kế REST và vi phạm tính bất biến tài chính.
+
+#### Câu 2: Nếu có, API mới đó chịu trách nhiệm gì?
+- **Trả lời: Không áp dụng (N/A)** do không cần tạo API mới.
+
+#### Câu 3: Nếu không, service/method thanh toán hiện tại nào cần chỉnh sửa?
+- **Trả lời:**
+  - Về mặt logic Backend thanh toán (`PaymentService.cs`, `GateService.cs`): **Không cần sửa đổi logic cốt lõi.** Cả 6 phương thức thanh toán (`CreateDepositPaymentAsync`, `CreateSessionPaymentAsync`, `RecordCashAsync`, `HandleCallbackAsync`, `ApplyFeeAsync`, `RefundDepositAsync`) đều đã gán chính xác `ParkingLotId` và xử lý trạng thái chuẩn xác.
+  - Về mặt hiển thị Frontend (`ManagerConsolePage.tsx`): Bổ sung đọc phương thức `RFID_WALLET` trên thẻ KPI doanh thu hôm nay để số tiền thu từ Ví không bị bỏ sót trong dòng chú thích phân rã.
+  - Về mặt dữ liệu / cấu hình kiểm thử (`ParkingLotDataSeed.cs` & Quản trị phân quyền): Cần gán tài khoản Quản lý vào đúng bãi đỗ xe đang thực hiện giao dịch kiểm thử (hoặc chạy test trên đúng bãi mà Quản lý được phân công).
+
+#### Câu 4: Các endpoint Revenue API nào bắt buộc phải giữ nguyên vì thuộc quyền sở hữu của thành viên khác?
+- **Trả lời:** Giữ nguyên 100% không chỉnh sửa các endpoint sau:
+  - `GET /api/v1/reports/revenue/kpi`
+  - `GET /api/v1/reports/revenue/by-lot`
+  - `GET /api/v1/reports/revenue/payment-methods`
+  - `GET /api/v1/reports/revenue/timeseries`
+  - `GET /api/v1/reports/revenue/breakdown`
+  và toàn bộ logic nội bộ trong `RevenueReportService.cs`.
+
+#### Câu 5: Có bằng chứng nào chứng minh việc xóa bỏ / rollback mã nguồn đã triển khai trước đó là chính đáng không?
+- **Trả lời: TUYỆT ĐỐI KHÔNG CÓ BẰNG CHỨNG.**
+  - Toàn bộ mã nguồn Báo cáo Doanh thu đã vượt qua **431/431 bài kiểm thử tự động**, đáp ứng chính xác đặc tả `SRS v1.3 FR-RPT-01/02`, tính toán đúng Net Revenue và đã tổng hợp chính xác khoản tiền 30.000 VNĐ thực tế.
+  - Việc xóa bỏ hoặc rollback mã nguồn của tính năng này sẽ phá hủy công sức của đồng nghiệp, làm hỏng các trang Dashboard và vi phạm nghiêm trọng đạo đức làm việc nhóm.
+
+#### Đề xuất bộ thay đổi tối thiểu (Minimal Proposed Change Set):
+1. **`src/pages/management/ManagerConsolePage.tsx` (Frontend):**
+   - *Mục đích:* Bổ sung trích xuất và hiển thị phương thức `RFID_WALLET` trên thẻ KPI Today's Revenue.
+   - *Thay đổi:* Thêm `const walletRevenue = methodBreakdown.data?.find(m => m.method === 'RFID_WALLET')?.totalAmount ?? 0;` và đưa vào giao diện render.
+2. **`src/PMS.DataAccess/Persistence/ParkingLotDataSeed.cs` (Backend Seed - Tùy chọn):**
+   - *Mục đích:* Tự động gán tài khoản Manager mẫu vào cả 3 bãi xe khi seed database, giúp việc kiểm thử trên môi trường local không bị gặp lỗi phân quyền bãi.
+3. **Thao tác vận hành / Dữ liệu kiểm thử (Operational Action):**
+   - Gọi API Quản trị `PUT /api/admin/managers/{id}/lots` để gán bãi xe kiểm thử cho tài khoản Manager.
+
+---
+
+### 14.8. Bảng Phân Định Trạng Thái Thông Tin (Information Classification)
+
+| Phân loại | Nội dung kết luận kỹ thuật |
+| :--- | :--- |
+| `[FACT]` | Bản ghi thanh toán 30.000 VNĐ (ID 2) đã được lưu thành công với `ParkingLotId = 3`, `Status = Succeeded`, `Purpose = Deposit`. |
+| `[FACT]` | API `GET /api/v1/reports/revenue/by-lot` trả về chính xác 30.000 VNĐ cho Bãi 3 khi gọi bằng quyền Admin. |
+| `[FACT]` | Tài khoản `manager@test.com` chỉ được gán quản lý Bãi 1, do đó Dashboard Manager của tài khoản này hiển thị 0 VNĐ là hoàn toàn đúng theo thiết kế an toàn `FR-AUTH-07`. |
+| `[FACT]` | Tất cả các luồng thanh toán (Cọc, Phí theo giờ, Tiền mặt, Dynamic QR) trong `PaymentService.cs` và `GateService.cs` đều đã tự động gán `ParkingLotId`. |
+| `[FACT]` | `RevenueReportService` tự động loại bỏ các khoản nạp ví (`WalletTopUp`) khỏi doanh thu bãi đỗ xe theo đúng nguyên tắc kế toán tài chính. |
+| `[INFERENCE]` | Không cần tạo thêm bất kỳ API ghi nhận doanh thu mới nào; hệ thống hiện tại đã đáp ứng đầy đủ yêu cầu nghiệp vụ của anh Hậu sau khi chuẩn hóa phân quyền kiểm thử. |
+| `[UNKNOWN]` | Chưa có thông tin về việc hệ thống có dự kiến triển khai cơ chế gán nhiều Manager đồng quản lý một bãi xe trong Phase 2 hay không (hiện schema chỉ có cột khóa ngoại đơn `ParkingLots.ManagerUserId`). |
+
+---
+
+### 14.9. Danh Mục Tệp Tin Mã Nguồn và Bằng Chứng Kỹ Thuật Đối Soát (Traceability Matrix)
+
+| Thành phần chức năng | Tệp tin mã nguồn liên quan | Vai trò & Bằng chứng kiểm toán |
+| :--- | :--- | :--- |
+| Thanh toán Cọc & Ví | `src/PMS.Application/Services/Impl/PaymentService.cs#L35-L122` | Xử lý cọc qua Ví và Gateway; gán `ParkingLotId = reservation.ParkingLotId`. |
+| Thanh toán Phí đỗ theo giờ | `src/PMS.Application/Services/Impl/PaymentService.cs#L124-L213` | Xử lý trả phí đỗ qua App; gán `ParkingLotId = session.ParkingLotId`. |
+| Thu tiền mặt tại làn | `src/PMS.Application/Services/Impl/PaymentService.cs#L215-L245` | Thu tiền mặt tại bốt; gán `ParkingLotId = session.ParkingLotId`, lưu Staff. |
+| Tính toán phí theo giờ | `src/PMS.Application/Helpers/Parking/FeeCalculator.cs` | Tính phí đỗ theo block, ngày, trần ngày và cấn trừ tiền cọc (`Settle`). |
+| Điều phối làn ra & Cửa sổ thoát | `src/PMS.Application/Services/Impl/GateService.cs#L355-L430, L610-L650` | Cấp Exit Window 15 phút, tính toán phụ phí quá hạn và hoàn cọc thừa. |
+| Tổng hợp báo cáo doanh thu | `src/PMS.Application/Services/Impl/RevenueReportService.cs#L370-L450` | Lọc thanh toán hợp lệ theo bãi, trừ hoàn tiền, gom nhóm theo phương thức. |
+| Endpoint Báo cáo doanh thu | `src/PMS.API/Controllers/ReportsController.cs` | Cung cấp 5 endpoint REST cho Admin và Manager, bảo vệ bằng RBAC. |
+| Giao diện Manager Console | `src/pages/management/ManagerConsolePage.tsx#L55-L66, L172-L175` | Nơi hiển thị Today's Revenue cho Manager (cần bổ sung hiển thị Ví). |
+| Giao diện Khách đặt cọc | `src/components/customer/dashboard/ReserveBayPanel.tsx` | Nút chọn thanh toán cọc qua Ví, VNPay, MoMo. |
+| Giao diện Khách trả phí đỗ | `src/components/customer/dashboard/SessionCards.tsx#L239-L246` | Nút trả trước tiền đỗ xe qua Ví, VNPay, MoMo. |
+| Giao diện Thu ngân làn ra | `src/pages/staff/StaffCheckoutPage.tsx#L110-L159` | Thu tiền mặt F5 hoặc hiển thị Dynamic QR VietQR tại quầy. |
