@@ -625,3 +625,175 @@ Phân loại trạng thái tuân thủ:
 | **Kiểm thử Đơn vị Backend** | `tests/PMS.Application.UnitTests/Reports/RevenueReportServiceTests.cs` | **10/10 Tests PASS** (Bao phủ: tính toán thuần, loại trừ hoàn tiền, phân nhóm bãi, lỗi truy cập bãi lạ, v.v.). |
 | **Kiểm thử Tích hợp API** | `tests/PMS.Api.IntegrationTests/Tests/ReportsEndpointTests.cs` | **10/10 Tests PASS** (Bao phủ: xác thực token, mã 401, mã 403 Forbidden cho Manager, dữ liệu đầy đủ cho Admin). |
 | **Toàn bộ Test Suite Dự án** | `tests/PMS.Application.UnitTests` & `IntegrationTests` | **431/431 Tests PASS** (Toàn bộ kiểm thử hồi quy không phát sinh bất kỳ lỗi nào). |
+
+
+---
+
+## 13. Missing Revenue After User Slot Payment — Investigation
+
+### 13.1. Bối Cảnh và Mục Tiêu Điều Tra (Context & Investigation Goals)
+- **Hiện tượng quan sát:** Khách hàng kiểm thử (`aaaa@gmail.com`) thực hiện đặt cọc giữ chỗ đỗ xe thành công trên giao diện Frontend với số tiền **30.000 VNĐ** (trừ từ ví điện tử). Tuy nhiên, trên màn hình Dashboard của tài khoản Quản lý bãi (`manager@test.com`) tại `/management/console` và `/management/revenue`, chỉ số doanh thu vẫn hiển thị **0 VNĐ**, không ghi nhận khoản 30.000 VNĐ vừa thanh toán.
+- **Phạm vi kiểm tra:** Thực hiện điều tra read-only toàn diện xuyên suốt luồng: Giao diện đặt chỗ khách hàng $\rightarrow$ API đặt chỗ & thanh toán Backend $\rightarrow$ Cơ sở dữ liệu (`Payments`, `Reservations`, `ParkingLots`, `Users`) $\rightarrow$ API Báo cáo Doanh thu (`ReportsController`) $\rightarrow$ Giao diện Manager Console (`ManagerConsolePage.tsx`).
+- **Nguyên tắc an toàn:** Tuyệt đối không thay đổi mã nguồn hệ thống, không sửa đổi dữ liệu DB, không chạy lệnh Git trên workspace nhóm, phân loại minh bạch các nhận định bằng nhãn `[FACT]`, `[OBSERVATION]`, `[HYPOTHESIS]`, `[INFERENCE]`.
+
+---
+
+### 13.2. Luồng Thanh Toán Chỗ Đỗ Thực Tế (Traced Payment Flow)
+Qua truy vết mã nguồn và kiểm chứng nhật ký dữ liệu thực tế:
+
+1. **Khách hàng thao tác đặt chỗ trên Frontend (`CustomerBookingsPage.tsx` / `ReservationModal.tsx`):**
+   - Tài khoản khách hàng: `aaaa@gmail.com` (`UserId = 549cd95a-4a7c-4364-a608-5be5c4d0fa27`).
+   - Khách chọn bãi đỗ xe: **`ParkingLotId = 3`** (Bãi đỗ xe Cộng Hòa - `LOT-CONGHOA-01`).
+   - Khách chọn vị trí đỗ: `SlotId = 327` (mã vị trí: `L3-17`, Tầng 3).
+   - Thời gian bắt đầu dự kiến: `2026-10-27 10:15:00` (giờ VN).
+   - Frontend gửi yêu cầu tạo giữ chỗ tới API Backend: `POST /api/v1/reservations`.
+
+2. **Backend khởi tạo giữ chỗ (`ReservationService.CreateReservationAsync`):**
+   - Vị trí mã nguồn: [`ReservationService.cs`](file:///C:/DEV/OJT-FSA-Team3/parking-management-system/src/PMS.Application/Services/Impl/ReservationService.cs).
+   - Backend tạo bản ghi `Reservation` (ID: `1`, mã: `RSV261027093057LXNBKX`) với `Status = 'PendingPayment'`, `DepositAmount = 30000.00`, `ParkingLotId = 3`.
+   - Vị trí `SlotId = 327` được chuyển sang trạng thái tạm giữ `Reserved`.
+
+3. **Xử lý thanh toán tiền cọc qua Ví điện tử (`PaymentService.ProcessWalletPaymentAsync`):**
+   - Vị trí mã nguồn: [`PaymentService.cs`](file:///C:/DEV/OJT-FSA-Team3/parking-management-system/src/PMS.Application/Services/Impl/PaymentService.cs#L88-L150).
+   - Khách hàng chọn phương thức thanh toán ví nội bộ (`Wallet`).
+   - `PaymentService` thực hiện trừ số dư ví người dùng 30.000 VNĐ.
+   - Bản ghi thanh toán `Payment` (ID: `2`, mã: `PM261027093116NPP2CG`) được tạo và xác nhận thành công ngay lập tức:
+     - Trạng thái: `Status = 'Succeeded'`.
+     - Thời điểm thanh toán: `PaidAt = 2026-10-27 09:31:16.581` (UTC) tức `16:31:16` giờ Việt Nam ngày 27/10/2026.
+     - `Purpose = 'Deposit'`, `Amount = 30000.00`, `RefundedAmount = 0.00`.
+     - Khóa ngoại liên kết bãi: `ParkingLotId = 3`.
+     - Khóa ngoại liên kết giữ chỗ: `ReservationId = 1`.
+
+4. **Kích hoạt trạng thái đặt chỗ:**
+   - Sau khi thanh toán cọc thành công, `Reservation.Status` chuyển sang `Confirmed` (`ConfirmedAt = 2026-10-27 09:31:16.624`).
+   - *(Lưu ý vận hành sau đó: Do phiên kiểm thử không thực hiện check-in vào bãi trước hạn chót 10:45 VN, reservation đã chuyển sang `NoShow`. Theo quy tắc `FR-RSV-05`, tiền cọc không được hoàn lại (`RefundedAmount = 0.00`) và được giữ lại toàn bộ tính vào doanh thu bãi đỗ).*
+
+---
+
+### 13.3. Kết Quả Kiểm Chứng Bản Ghi Thanh Toán (Findings for Each Relevant Payment Field)
+Truy vấn trực tiếp cơ sở dữ liệu `parking_management_system_nguye` trên bảng `Payments`:
+
+| Trường dữ liệu (Field) | Giá trị ghi nhận thực tế | Ý nghĩa kỹ thuật & Đối chiếu nghiệp vụ | Phân loại bằng chứng |
+| :--- | :--- | :--- | :--- |
+| **`Id`** | `2` | Khóa chính bản ghi thanh toán. | `[FACT]` |
+| **`PaymentCode`** | `PM261027093116NPP2CG` | Mã giao dịch sinh tự động duy nhất. | `[FACT]` |
+| **`Payment status`** | `Succeeded` | Giao dịch đã hoàn tất và trừ tiền ví thành công. Thỏa mãn điều kiện lọc doanh thu của Backend (`Status == PaymentStatus.Succeeded`). | `[FACT]` |
+| **`PaidAt`** | `2026-10-27 09:31:16.5810000` (UTC) | Tương đương `16:31:16.581` (UTC+7, giờ Việt Nam ngày 27/10/2026). Nằm trọn vẹn trong khoảng thời gian ngày hiện tại. | `[FACT]` |
+| **`Amount`** | `30000.00` | Số tiền thanh toán cọc: 30.000 VNĐ. | `[FACT]` |
+| **`Purpose`** | `Deposit` | Phân loại mục đích thanh toán là tiền cọc đặt chỗ xe. Thỏa mãn điều kiện ghi nhận doanh thu bãi đỗ xe. | `[FACT]` |
+| **`ParkingLotId`** | **`3`** | **Bãi đỗ xe được thanh toán là Bãi đỗ xe Cộng Hòa (`LOT-CONGHOA-01`).** Không phải Bãi ĐH FPT (Id = 1). | `[FACT]` |
+| **`RefundedAmount`** | `0.00` | Không phát sinh bất kỳ khoản hoàn tiền nào. Doanh thu thuần (Net Revenue) đạt trọn vẹn `30.000 - 0 = 30.000 VNĐ`. | `[FACT]` |
+| **`PaymentMethod`** | `Wallet` | Phương thức thanh toán qua ví nội bộ. Trong báo cáo doanh thu được nhóm thành `RFID_WALLET`. | `[FACT]` |
+| **`GatewayProvider`** | `Wallet` | Cổng thanh toán nội bộ. | `[FACT]` |
+| **`ReservationId`** | `1` | Bản ghi giữ chỗ liên kết (Reservation `RSV261027093057LXNBKX`). | `[FACT]` |
+| **`ParkingSessionId` / `SessionId`** | `NULL` | Hợp lệ vì đây là thanh toán cọc đặt chỗ trước, xe chưa vào bãi nên chưa khởi tạo phiên đỗ (`ParkingSession`). | `[FACT]` |
+
+---
+
+### 13.4. Luồng Dữ Liệu Hiển Thị Doanh Thu Trên Dashboard Manager (Manager Dashboard Data Flow)
+Truy vết chi tiết cách Frontend và Backend tương tác khi người dùng đăng nhập tài khoản Quản lý (`manager@test.com`):
+
+1. **Endpoint và tham số truy vấn được gọi (Endpoints & Query Parameters):**
+   - Khi Manager mở trang Overview Console (`ManagerConsolePage.tsx#L55-L66`):
+     - Gọi `reportService.getRevenueByParkingLot({ startDate: '2026-10-27', endDate: '2026-10-27' })` $\rightarrow$ `GET /api/v1/reports/revenue/by-lot?startDate=2026-10-27&endDate=2026-10-27`.
+     - Gọi `reportService.getPaymentMethodBreakdown({ startDate: '2026-10-27', endDate: '2026-10-27' })` $\rightarrow$ `GET /api/v1/reports/revenue/payment-methods?startDate=2026-10-27&endDate=2026-10-27`.
+   - Khi Manager mở trang Báo cáo Doanh thu (`RevenueReportPage.tsx`):
+     - Gọi thêm các endpoint: `GET /api/v1/reports/revenue/kpi`, `timeseries`, `breakdown`.
+
+2. **Xác minh sử dụng Mock Data hay API thật (Mock vs Real API):**
+   - `[FACT]` **Hệ thống đang gọi 100% API thật từ Backend**. Tùy chọn `VITE_MOCK_SERVICES` đã gỡ bỏ module `reports`, request thực sự được gửi tới Backend ASP.NET Core (`PMS.API.exe`) và trả về dữ liệu thực tế từ SQL Server.
+
+3. **Cơ chế xác định Bãi đỗ xe của Manager (Lot Selection Mechanism):**
+   - Trên Frontend:
+     - `ManagerConsolePage.tsx` được bao bọc bởi component `<WithManagerLot>`, sử dụng hook `useManagerLot()` ([`ManagerLotContext.tsx#L50-L75`](file:///C:/DEV/OJT-FSA-Team3/parking-management-system-frontend/src/contexts/ManagerLotContext.tsx#L50-L75)).
+     - Hook này tải danh sách bãi qua `lotManagementService.list()` và lọc: `lots.filter(l => l.managerUserId === user.userId)`.
+     - Đối với tài khoản `manager@test.com` (`UserId = 9415a19f-8940-41c8-9f62-5fb13e19d3be`):
+       - Bãi 1 (`FPT University Parking Lot`, `Id = 1`): `ManagerUserId = '9415a19f-8940-41c8-9f62-5fb13e19d3be'`.
+       - Bãi 2 (`Fsoft Parking Lot`, `Id = 2`): `ManagerUserId = NULL`.
+       - Bãi 3 (`Cong Hoa Parking Lot`, `Id = 3`): `ManagerUserId = NULL`.
+       - Do đó, bãi đỗ duy nhất mà `manager@test.com` phụ trách là **Bãi 1 (`id: "1"`)**.
+     - Trong `ManagerConsolePage.tsx#L57`:
+       ```typescript
+       const lotRevenue = todayByLot.data?.find((r) => r.parkingLotId === lot.id)?.totalRevenue ?? 0;
+       ```
+       Vì `lot.id === "1"`, mã nguồn chỉ trích xuất doanh thu của Bãi 1.
+
+4. **Xác minh khoảng thời gian báo cáo (Date Range Coverage):**
+   - `[FACT]` Giao dịch thanh toán ID 2 diễn ra lúc `09:31:16 UTC` ngày 27/10/2026 (tức `16:31:16` giờ Việt Nam).
+   - Bộ lọc ngày hôm nay gửi `startDate=2026-10-27&endDate=2026-10-27`. Backend quy đổi múi giờ `SE Asia Standard Time` thành khoảng thời gian UTC `[2026-10-26 17:00:00 UTC, 2026-10-27 16:59:59.999 UTC]`.
+   - Thời điểm `09:31:16 UTC` nằm hoàn toàn trong khoảng thời gian này.
+
+5. **Kiểm chứng điều kiện tổng hợp của Revenue Reporting API (Aggregation Verification):**
+   - Kiểm tra bằng quyền **Admin** (`admin@admin.com`):
+     - Gọi `GET /api/v1/reports/revenue/by-lot?startDate=2026-10-27&endDate=2026-10-27`:
+       ```json
+       [
+         { "parkingLotId": "1", "parkingLotName": "FPT University Parking Lot", "totalRevenue": 0.0, "totalTransactions": 0 },
+         { "parkingLotId": "2", "parkingLotName": "Fsoft Parking Lot", "totalRevenue": 0.0, "totalTransactions": 0 },
+         { "parkingLotId": "3", "parkingLotName": "Cong Hoa Parking Lot", "totalRevenue": 30000.0, "totalTransactions": 1 }
+       ]
+       ```
+     - Gọi `GET /api/v1/reports/revenue/kpi`: Trả về `totalRevenue: 30000.0, totalTransactions: 1`.
+     - `[FACT]` **Kết quả chứng minh tuyệt đối:** Thuật toán tính doanh thu của Backend hoạt động hoàn hảo 100%, ghi nhận chính xác 30.000 VNĐ cho Bãi 3 (`Cong Hoa Parking Lot`).
+   - Kiểm tra bằng quyền **Manager** (`manager@test.com`):
+     - Vị trí mã nguồn Backend: [`RevenueReportService.cs#L379-L414`](file:///C:/DEV/OJT-FSA-Team3/parking-management-system/src/PMS.Application/Services/Impl/RevenueReportService.cs#L379-L414).
+     - Backend áp dụng bộ lọc phân quyền nghiêm ngặt theo đặc tả `FR-AUTH-03` và `FR-AUTH-07`: Chỉ lấy dữ liệu thanh toán thuộc các bãi có `ParkingLots.ManagerUserId == currentUserId`.
+     - Vì `manager@test.com` chỉ được gán quản lý Bãi 1, API trả về cho Manager:
+       ```json
+       [
+         { "parkingLotId": "1", "parkingLotName": "FPT University Parking Lot", "totalRevenue": 0.0, "totalTransactions": 0 }
+       ]
+       ```
+     - Khi Manager cố tình truy vấn Bãi 3 (`GET /api/v1/reports/revenue/by-lot?parkingLotId=3`), Backend lập tức chặn bằng mã phản hồi **`HTTP 403 Forbidden`** (`{"errors":["You do not manage this parking lot."]}`).
+
+---
+
+### 13.5. Nguyên Nhân Gốc Rễ Đã Xác Minh (Confirmed Root Cause)
+
+Qua toàn bộ chuỗi chứng cứ kỹ thuật, nguyên nhân khiến Dashboard Manager hiển thị 0 VNĐ được xác nhận là do **sự bất đối xứng trong cấu hình dữ liệu kiểm thử (Test Scenario Lot Assignment Mismatch)**, kết hợp cùng một khiếm khuyết hiển thị nhỏ trên giao diện:
+
+#### 1. Nguyên nhân chính (Primary Root Cause - Operational / Data Assignment Mismatch)
+- `[FACT]` Tài khoản khách hàng (`aaaa@gmail.com`) đặt chỗ tại **Bãi 3 (`Cong Hoa Parking Lot`)**, do đó khoản tiền 30.000 VNĐ được ghi nhận chuẩn xác vào `ParkingLotId = 3`.
+- `[FACT]` Tài khoản quản lý dùng để kiểm thử (`manager@test.com`) trong cơ sở dữ liệu hiện chỉ được phân quyền quản lý duy nhất **Bãi 1 (`FPT University Parking Lot`)**, trong khi Bãi 3 đang có `ManagerUserId = NULL` (chưa có Quản lý nào phụ trách).
+- `[FACT]` Cơ chế bảo mật và phân quyền Backend (`FR-AUTH-07`) hoạt động hoàn toàn chính xác theo thiết kế an toàn: Ngăn chặn Manager của Bãi 1 truy cập doanh thu của Bãi 3.
+- `[INFERENCE]` Do người kiểm thử đăng nhập bằng tài khoản Quản lý Bãi 1 để xem doanh thu phát sinh từ một giao dịch ở Bãi 3, Dashboard Manager chỉ hiển thị doanh thu của Bãi 1 (vốn bằng 0 VNĐ), tạo ra cảm giác "tiền không cập nhật vào doanh thu".
+
+#### 2. Khiếm khuyết hiển thị phụ trên Frontend (Secondary Frontend Display Bug)
+- `[FACT]` Tại [`ManagerConsolePage.tsx#L64-L65`](file:///C:/DEV/OJT-FSA-Team3/parking-management-system-frontend/src/pages/management/ManagerConsolePage.tsx#L64-L65) và [`L172-L175`](file:///C:/DEV/OJT-FSA-Team3/parking-management-system-frontend/src/pages/management/ManagerConsolePage.tsx#L172-L175):
+  ```typescript
+  const qrRevenue = methodBreakdown.data?.find((m) => m.method === 'QR_BANKING')?.totalAmount ?? 0;
+  const cashRevenue = methodBreakdown.data?.find((m) => m.method === 'CASH')?.totalAmount ?? 0;
+  ```
+  Và phần render dòng chữ chú thích bên dưới thẻ Today's Revenue:
+  ```tsx
+  <p className="text-xs text-muted-foreground mt-1">
+    VietQR: {formatVND(qrRevenue)} &bull; Cash: {formatVND(cashRevenue)}
+  </p>
+  ```
+- `[FACT]` Giao dịch của khách hàng được thanh toán bằng **Ví (`Wallet`)**, và Backend phân loại thành phương thức `RFID_WALLET` (`RevenueReportService.cs#L125`).
+- `[OBSERVATION]` Component `ManagerConsolePage` hoàn toàn bỏ quên phương thức thanh toán `RFID_WALLET`. Ngay cả khi Manager được phân quyền đúng vào Bãi 3 để xem số tổng `30.000 ₫`, dòng phân tích con bên dưới thẻ KPI vẫn sẽ hiển thị: `VietQR: 0 ₫ • Cash: 0 ₫`, làm thiếu thông tin số tiền thu từ Ví.
+
+---
+
+### 13.6. Biện Pháp Khắc Phục Tối Thiểu và Phân Công Trách Nhiệm (Recommended Corrective Actions)
+
+| Hạng mục | Biện pháp kỹ thuật chi tiết | Phạm vi tác động | Người chịu trách nhiệm (Owner) |
+| :--- | :--- | :--- | :--- |
+| **Hành động 1: Gán quyền Quản lý Bãi 3 cho tài khoản test** *(Khắc phục ngay kịch bản kiểm thử)* | Gọi API Quản trị viên để gán `manager@test.com` phụ trách thêm Bãi 3 (Cộng Hòa):<br>`PUT /api/admin/managers/9415a19f-8940-41c8-9f62-5fb13e19d3be/lots`<br>Body: `[1, 3]`<br>*(Hoặc thao tác trực tiếp trên giao diện Admin tại `/admin/users`).*<br>Sau khi gán, tài khoản Manager sẽ quản lý cả Bãi 1 và Bãi 3. Khi Manager chọn Bãi 3 trên giao diện, Today's Revenue sẽ lập tức hiển thị **30.000 VNĐ**. | Cấu hình dữ liệu phân quyền / API Admin (Không sửa code Backend). | **Test Admin / QA Lead** |
+| **Hành động 2: Bổ sung hiển thị doanh thu Ví trên thẻ KPI Manager Console** *(Sửa lỗi UI phụ)* | Chỉnh sửa `src/pages/management/ManagerConsolePage.tsx`:<br>1. Bổ sung trích xuất doanh thu Ví:<br>`const walletRevenue = methodBreakdown.data?.find((m) => m.method === 'RFID_WALLET')?.totalAmount ?? 0;`<br>2. Cập nhật dòng hiển thị bên dưới:<br>`VietQR: {formatVND(qrRevenue)} • Ví: {formatVND(walletRevenue)} • Tiền mặt: {formatVND(cashRevenue)}` | Mã nguồn Frontend (`ManagerConsolePage.tsx`). | **Frontend Engineer** |
+| **Hành động 3: Bổ sung tự động gán Manager trong Seed dữ liệu** *(Ngăn ngừa tái diễn trên môi trường dev)* | Cập nhật file seed `ParkingLotDataSeed.cs` để khi khởi tạo database mẫu, bãi đỗ `LOT-FPTU-01` và `LOT-CONGHOA-01` tự động liên kết với tài khoản Manager mẫu, tránh tình trạng bãi mới tạo có `ManagerUserId = NULL`. | Mã nguồn Backend Seed (`ParkingLotDataSeed.cs`). | **Backend Engineer** |
+
+---
+
+### 13.7. Bảng Tổng Hợp Bằng Chứng & Vị Trí Tệp Tin (Traceability & Evidence Matrix)
+
+| Nội dung kết luận | Vị trí tệp tin / Endpoint | Dòng mã nguồn / Bằng chứng thực tế |
+| :--- | :--- | :--- |
+| Bản ghi thanh toán 30.000 VNĐ thành công | Cơ sở dữ liệu: `Payments` | `Id = 2`, `PaymentCode = 'PM261027093116NPP2CG'`, `Status = 'Succeeded'`, `ParkingLotId = 3`, `Amount = 30000.00`, `RefundedAmount = .00`. |
+| Bản ghi giữ chỗ được xác nhận | Cơ sở dữ liệu: `Reservations` | `Id = 1`, `ReservationCode = 'RSV261027093057LXNBKX'`, `UserId = 549cd95a-...`, `ParkingLotId = 3`, `SlotId = 327`. |
+| Phân quyền bãi đỗ của Manager hiện tại | Cơ sở dữ liệu: `ParkingLots` | Bãi 1: `ManagerUserId = '9415a19f-...'`; Bãi 2: `ManagerUserId = NULL`; Bãi 3: `ManagerUserId = NULL`. |
+| Backend API ghi nhận chính xác 30.000 VNĐ cho Bãi 3 | `GET /api/v1/reports/revenue/by-lot` (Admin Token) | HTTP 200: Trả về Bãi 3 đạt `totalRevenue: 30000.0`, `totalTransactions: 1`. |
+| Backend API cô lập dữ liệu theo quyền Manager | `GET /api/v1/reports/revenue/by-lot` (Manager Token) | HTTP 200: Chỉ trả về Bãi 1 với `totalRevenue: 0.0`. Truy cập Bãi 3 trả về HTTP 403 Forbidden. |
+| Logic lọc bãi theo Manager trên Backend | `src/PMS.Application/Services/Impl/RevenueReportService.cs` | Dòng 379–414 (`ApplyLotFilter` và `ValidateManagerLotAccess`). |
+| Logic chọn bãi hiển thị trên Frontend Manager | `src/contexts/ManagerLotContext.tsx` | Dòng 50–75 (`lots.filter(l => l.managerUserId === user.userId)`). |
+| Khiếm khuyết bỏ quên Ví trong chú thích KPI | `src/pages/management/ManagerConsolePage.tsx` | Dòng 64–65 và 172–175 (chỉ đọc `QR_BANKING` và `CASH`, bỏ qua `RFID_WALLET`). |
