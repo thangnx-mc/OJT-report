@@ -1,66 +1,68 @@
-# Báo Cáo Rà Soát Codebase & Thiết Kế API Ghi Nhận Doanh Thu Bãi Đỗ Xe (Parking System Revenue API Specification & Architecture Design)
+# Báo Cáo Triển Khai & Kiểm Toán Kỹ Thuật: Revenue Reporting API (Manager / Admin Role Separation)
 
 ---
 
-## 1. Mục Đích và Yêu Cầu Cập Nhật Nghiệp Vụ (Purpose & Business Requirements Update)
+## 1. Mục Đích và Yêu Cầu Nghiệp Vụ Đã Phê Duyệt (Approved Business Requirements)
 
-### 1.1. Bối cảnh nhiệm vụ
-Nhiệm vụ được giao từ Trưởng nhóm:
-> *“Làm API khi user thanh toán xong thì tiền cập nhật vào doanh thu của bãi đỗ, thằng manager xem dashboard thấy bãi đã có doanh thu.”*
+### 1.1. Bối cảnh & Yêu cầu từ Trưởng nhóm
+Nhiệm vụ: Triển khai API ghi nhận doanh thu bãi đỗ xe khi người dùng thanh toán xong, phục vụ việc hiển thị doanh thu trên Dashboard của Quản lý bãi (Manager Console) và Quản trị viên hệ thống (Admin Revenue Report).
 
-Dựa trên các trao đổi và xác nhận nghiệp vụ mới nhất, yêu cầu thiết kế cho hệ thống Báo cáo Doanh thu (Revenue Reporting API) được cập nhật với hai định hướng kiến trúc cốt lõi:
-1. **Phân tách hoàn toàn hai API theo vai trò (Role-Based API Separation):** Manager và Admin sử dụng hai API riêng biệt, không dùng chung một endpoint rồi phân nhánh kết quả theo role.
-   - **Manager API:** Chỉ cung cấp doanh thu của bãi xe mà Manager đang trực tiếp quản lý (`ParkingLots.ManagerUserId == currentUserId`). Manager không được tự ý truyền `parkingLotId` của bãi không thuộc quyền quản lý (trả về lỗi HTTP 403 Forbidden). Quan hệ giữa Manager và bãi xe trong thực tế là **1 : N** (một Manager có thể quản lý nhiều bãi).
-   - **Admin API:** Cung cấp doanh thu toàn hệ thống, tổng hợp tất cả các bãi đang hoạt động (`!p.IsDeleted`) và hỗ trợ phân rã hoặc lọc theo từng bãi cụ thể.
-   - **Quy chuẩn định tuyến (Routing Convention):** Tên route tuân thủ nghiêm ngặt quy chuẩn của dự án (`api/manager/...` và `api/admin/...`).
-2. **Quy tắc doanh thu chuẩn hóa ("Today's Revenue" = Phí gửi xe của Slot/Session):**
-   - Doanh thu slot trong Manager Console **chỉ tính từ phí gửi xe của phiên đỗ (`ParkingSession.FinalFee`)**.
-   - **Tuyệt đối không tính:** tiền cọc đặt chỗ rời rạc, tiền nạp ví nội bộ, tiền hoàn cọc, hoặc các khoản thu phạt/dịch vụ khác ngoài phí gửi xe.
-   - **Không phân biệt phương thức thanh toán:** Tổng phí gửi xe của slot được ghi nhận trọn vẹn bất kể khách thanh toán bằng cọc, ví, tiền mặt hay cổng thanh toán trực tuyến.
-   - *Ví dụ chuẩn hóa:* Khách có 50.000 VND tiền cọc được cấn trừ vào phí gửi xe tổng cộng 80.000 VND và thanh toán thêm 30.000 VND tại lối ra. Doanh thu slot của bãi phải ghi nhận đủ **80.000 VND** (không phải 30.000 VND và không phải 130.000 VND).
+Các yêu cầu nghiệp vụ cốt lõi đã được phê duyệt và hoàn thành triển khai:
+1. **Phân tách hoàn toàn hai API độc lập theo vai trò:** Manager và Admin có endpoint riêng, route riêng, quyền hạn riêng và hợp đồng DTO phản hồi riêng biệt, không dùng chung một endpoint rồi phân nhánh role.
+2. **Cô lập dữ liệu bãi xe của Manager (Quan hệ 1 : N):**
+   - Manager chỉ có quyền xem doanh thu của các bãi xe mà mình đang trực tiếp quản lý (`ParkingLots.ManagerUserId == currentUserId && !p.IsDeleted`).
+   - Nếu Manager truyền `parkingLotId` không thuộc quyền quản lý $\rightarrow$ Hệ thống lập tức trả về **HTTP 403 Forbidden**.
+   - Nếu Manager chưa được gán bãi nào $\rightarrow$ Trả về kết quả rỗng hợp lệ (0 doanh thu, 0 phiên), tuyệt đối không để lộ dữ liệu bãi của người khác.
+   - Hỗ trợ mô hình một Manager quản lý 0, 1 hoặc nhiều bãi xe.
+3. **Báo cáo toàn hệ thống cho Admin:**
+   - Admin xem được doanh thu toàn hệ thống trên tất cả các bãi đang hoạt động (`!p.IsDeleted`).
+   - Admin có thể lọc theo từng `parkingLotId` cụ thể. Nếu bãi không tồn tại hoặc đã xóa $\rightarrow$ Trả về **HTTP 404 Not Found**.
+4. **Nguồn doanh thu chuẩn hóa ("Today's Revenue" = Phí gửi xe của Slot/Session):**
+   - Doanh thu slot được lấy duy nhất từ **`ParkingSession.FinalFee`** của các phiên đã tất toán/hoàn tất (`Completed` hoặc `Paid`).
+   - Tuyệt đối không tính tiền cọc đặt chỗ rời rạc, nạp ví nội bộ, tiền hoàn cọc, hoặc các khoản thu phạt/dịch vụ khác ngoài phí gửi xe.
+   - Không phân biệt phương thức thanh toán đối với tổng phí slot.
+   - Không bị tính trùng (double-count) khi tiền cọc được cấn trừ vào phí đỗ xe tại thời điểm checkout.
+5. **Cơ cấu phương thức thanh toán (Payment-Method Breakdown):**
+   - Phản ánh chính xác phần đóng góp của từng phương thức thanh toán cấu thành nên doanh thu của phiên đỗ xe (phần cọc bù trừ `DepositApplied` + phần trả thêm tại checkout `PaidAmount`).
+   - Tổng giá trị các phương thức thanh toán luôn khớp 100% với `totalRevenue`.
 
 ---
 
-## 2. Xác Minh Baseline Codebase Thực Tế (Current Repository Baseline & Verification)
+## 2. Xác Minh Baseline Codebase Thực Tế (Repository Verification)
 
 ### 2.1. Backend Repository (`parking-management-system`)
 - **Đường dẫn thư mục:** `C:\DEV\OJT-FSA-Team3\parking-management-system`
-- **Nhánh Git hiện tại:** `develop` @ commit `2cf5eb1` (`feat: prevent duplicate phone number and citizen ID on profile update`)
+- **Nhánh Git:** `develop`
+- **HEAD Commit SHA:** `2cf5eb1` (`feat: prevent duplicate phone number and citizen ID on profile update`)
 - **Khảo sát Routing Convention:**
   - `src/PMS.API/Controllers/AdminController.cs#L14-15`: `[Route("api/admin")]`, `[Authorize(Roles = "Admin")]`.
   - `src/PMS.API/Controllers/ManagerController.cs#L14-15`: `[Route("api/manager")]`, `[Authorize(Roles = "Manager")]`.
   - `src/PMS.API/Controllers/ManagerOperationsController.cs#L11-12`: `[Route("api/manager")]`.
   - `src/PMS.API/Controllers/ManagerPricingController.cs#L15-16`: `[Route("api/manager/lots/{lotId:int}/pricing-rules")]`.
-  - `src/PMS.API/Controllers/StaffController.cs#L13`: `[Route("api/staff")]`.
-  - `src/PMS.API/Controllers/LotsController.cs#L15-16`: `[Route("api/lots")]`, `[Route("api/parking-lots")]`.
-  $\rightarrow$ **Quy ước:** Toàn bộ controller phân quyền nội bộ trong backend sử dụng tiền tố theo vai trò không có versioning: `/api/admin/...` và `/api/manager/...`.
+  $\rightarrow$ **Quy ước:** Toàn bộ route quản trị và vận hành nội bộ sử dụng định dạng `/api/admin/...` và `/api/manager/...`.
 
 ### 2.2. Frontend Repository (`parking-management-system-frontend`)
 - **Đường dẫn thư mục:** `C:\DEV\OJT-FSA-Team3\parking-management-system-frontend`
-- **Nhánh Git hiện tại:** `develop` @ commit `f0d6a00`
-- **Hiện trạng tiêu thụ báo cáo:**
-  - `src/pages/management/ManagerConsolePage.tsx#L60-69`: Hiển thị thẻ KPI **"Today's revenue"** với số tiền tổng (`vnd(revenue)`) và breakdown 2 kênh: `VietQR / bank` (`vnd(qr)`) và `Cash` (`vnd(cash)`).
-  - `src/pages/admin/RevenueReportPage.tsx`: Màn hình báo cáo doanh thu quản trị chuyên sâu của Admin (KPI cards, biểu đồ xu hướng theo ngày, biểu đồ so sánh giữa các bãi xe, bảng phân rã chi tiết).
-  - `src/config/env.ts#L23,75`: Định nghĩa `reports: '/v1/reports'` và fallback `VITE_MOCK_SERVICES=capacity,reports`.
+- **Nhánh Git:** `develop` @ commit `f0d6a00`
+- **Tình trạng:** Giữ nguyên vẹn, không có file nào bị chỉnh sửa.
 
 ---
 
-## 3. Phân Tích Chuyên Sâu: Nguồn Dữ Liệu Doanh Thu Slot Trong Mã Nguồn
+## 3. Phân Tích Kỹ Thuật: Nguồn Doanh Thu Slot & Vòng Đời Phiên Đỗ
 
-### 3.1. Thực thể lưu trữ phí gửi xe chuẩn xác: `ParkingSession`
+### 3.1. Thực thể lưu trữ doanh thu phí gửi xe: `ParkingSession`
 Trong cơ sở dữ liệu và mã nguồn backend:
 - `src/PMS.Core/Entities/ParkingSession.cs#L68-74`:
-  - `OriginalFee`: Tổng phí đỗ xe tính toán theo thời lượng lưu bãi và biểu giá (`[decimal](18,2)`).
-  - `DiscountAmount`: Giá trị giảm giá hoặc khuyến mãi (`[decimal](18,2)`).
-  - `FinalFee`: **Tổng phí gửi xe cuối cùng mà phiên đỗ xe ghi nhận thu của khách hàng** (`[decimal](18,2)`).
-  - `Status`: Trạng thái phiên đỗ (`Active`, `PendingPayment`, `Paid`, `Completed`, `AbnormalClosed`, `EmergencyExit`).
+  - `OriginalFee`: Tổng phí tính theo thời gian đỗ xe và biểu giá (`decimal(18,2)`).
+  - `FinalFee`: **Tổng phí gửi xe cuối cùng của phiên đỗ xe** (`decimal(18,2)`).
+  - `Status`: Trạng thái phiên đỗ (`Completed`, `Paid`, `Active`, `PendingPayment`, `AbnormalClosed`, `EmergencyExit`).
 - `src/PMS.Core/Entities/ParkingSession.Operations.cs#L34-39`:
-  - `DepositApplied`: Số tiền cọc từ đặt chỗ trước được cấn trừ vào phí phiên đỗ theo quy định FR-RSV-07 (`[decimal](18,2)`).
-  - `PaidAmount`: Số tiền thực tế khách đã trả thêm tại làn ra / kiosk / app (`[decimal](18,2)`).
+  - `DepositApplied`: Số tiền cọc đặt chỗ được cấn trừ vào phí phiên đỗ (FR-RSV-07).
+  - `PaidAmount`: Số tiền thực tế khách đã trả thêm tại làn ra / kiosk / app.
 
-### 3.2. Truy vết toàn bộ Flow Tính Phí, Cấn Trừ Cọc và Checkout
-1. **Tính toán cấn trừ cọc tại thời điểm Checkout (`QuoteCheckoutAsync`):**
-   Tại `src/PMS.Application/Services/Impl/GateService.cs#L753-784`, dịch vụ cổng gọi bộ tính phí `FeeCalculator.Settle`:
+### 3.2. Truy vết Flow Tính Phí, Cấn Trừ Cọc và Tất Toán
+1. **Chốt tính phí tại thời điểm Checkout (`QuoteCheckoutAsync`):**
+   Tại `src/PMS.Application/Services/Impl/GateService.cs#L753-784`, dịch vụ cổng gọi `FeeCalculator.Settle`:
    ```csharp
    // FeeCalculator.cs dòng 123-135
    var gross = fee + lostTicketFee + late;
@@ -77,7 +79,7 @@ Trong cơ sở dữ liệu và mã nguồn backend:
    session.DepositApplied = settlement.DepositApplied;
    session.UpdatedAt = Now;
    ```
-2. **Thanh toán phần phí còn thiếu tại Lối ra / Kiosk / App:**
+2. **Khách thanh toán phần còn thiếu tại Lối ra / Kiosk / App:**
    Tại `src/PMS.Application/Services/Impl/PaymentService.cs#L560-568` (`SettleSession`):
    ```csharp
    session.PaidAmount += payment.Amount;
@@ -86,11 +88,11 @@ Trong cơ sở dữ liệu và mã nguồn backend:
    ```
    **Bất biến toán học luôn được bảo đảm:**
    $$\text{session.FinalFee} = \text{session.DepositApplied} + \text{session.PaidAmount}$$
-   *Minh chứng thực tế:* Với phiên đỗ có tổng phí 80.000 VND, tiền cọc 50.000 VND:
+   *Ví dụ thực tế:* Phiên đỗ có tổng phí 80.000 VND, tiền cọc 50.000 VND:
    - `session.DepositApplied` = 50.000 VND.
    - `session.PaidAmount` = 30.000 VND.
    - `session.FinalFee` = **80.000 VND**.
-3. **Xe qua cần Barie rời bãi (`CheckOutAsync`):**
+3. **Xe qua Barie rời bãi (`CheckOutAsync`):**
    Tại `src/PMS.Application/Services/Impl/GateService.cs#L450-488`:
    ```csharp
    session.Status = SessionStatus.Completed;
@@ -103,37 +105,36 @@ Trong cơ sở dữ liệu và mã nguồn backend:
    var totalSpent = totalCount == 0 ? 0 : await sessions.SumAsync(s => s.FinalFee);
    ```
 
-### 3.3. Kết luận: Bảng `dbo.Payments` không phải là nguồn tính doanh thu slot
-- Bảng `dbo.Payments` lưu trữ dòng tiền giao dịch tài chính rời rạc:
-  - Bản ghi cọc (`Purpose = 'Deposit'`, 50.000 VND) được thanh toán lúc đặt chỗ (có thể từ vài ngày trước).
-  - Bản ghi phí gửi xe (`Purpose = 'ParkingFee'`, 30.000 VND) được thanh toán lúc rời bãi hôm nay.
-- Nếu chỉ truy vấn `Payments` hôm nay với `Purpose = 'ParkingFee'`: bãi xe chỉ thấy 30.000 VND $\rightarrow$ **mất 50.000 VND doanh thu slot**.
-- Nếu cộng cả `Purpose = 'Deposit'`: các giao dịch cọc của khách hủy đặt chỗ hoặc No-Show (không hề sử dụng slot đỗ xe nào) sẽ bị tính nhầm vào "doanh thu slot".
-- **Do đó: `dbo.ParkingSessions.FinalFee` là Single Source of Truth duy nhất phản ánh chính xác 100% doanh thu phí gửi xe của slot.**
+### 3.3. Quy Tắc Xác Định Thời Điểm Ghi Nhận Doanh Thu (Deterministic Reporting Timestamp)
+Để ngăn ngừa việc cập nhật `UpdatedAt` ngẫu nhiên làm dịch chuyển phiên đỗ sang ngày khác:
+- **Phiên đã hoàn tất (`SessionStatus.Completed`):** `session.ExitTime` là mốc thời gian bất biến và duy nhất, được ghi nhận tại thời điểm xe vượt barie lối ra. Sau khi hoàn tất, không có bất kỳ luồng xử lý nào thay đổi lại `ExitTime`.
+- **Phiên đã thanh toán trước (`SessionStatus.Paid`):** Khách trả tiền tại Kiosk/App trong bãi và đang trong 15 phút lái xe ra cửa (`ExitTime` chưa có). Mốc thời gian được xác định từ `session.UpdatedAt` (được gán chính xác tại thời điểm `SettleSession` hoặc `QuoteCheckoutAsync` đưa trạng thái thành `Paid`).
+- Khoảng thời gian lọc được tính theo khoảng nửa mở (half-open interval) `[startUtc, endUtc)` theo múi giờ bãi xe (`SE Asia Standard Time` / ICT +7), sử dụng tiện ích chuẩn `ParkingText.FindTimeZone`.
 
 ---
 
-## 4. Phân Tách Chi Tiết Hai API Theo Vai Trò (Manager vs Admin)
+## 4. Đặc Tả Kỹ Thuật Hai API Độc Lập Theo Vai Trò
 
 ### 4.1. Bảng So Sánh Kiến Trúc Hai API
 
-| Tiêu chí kỹ thuật | Manager Revenue API | Admin Revenue API |
+| Tiêu chí | Manager Revenue API | Admin Revenue API |
 | :--- | :--- | :--- |
-| **Route quy chuẩn** | `GET /api/manager/reports/revenue` | `GET /api/admin/reports/revenue` |
-| **Phân quyền (Authorize)** | `[Authorize(Roles = "Manager")]` | `[Authorize(Roles = "Admin")]` |
-| **Mô hình sở hữu bãi** | **1 : N** (Một Manager có thể quản lý 0, 1 hoặc nhiều bãi xe, chứng minh tại [`EmployeeAccountService.cs#L217-218`](file:///C:/DEV/OJT-FSA-Team3/parking-management-system/src/PMS.Application/Services/Impl/EmployeeAccountService.cs#L217-L218) và [`AdminController.cs#L25-29`](file:///C:/DEV/OJT-FSA-Team3/parking-management-system/src/PMS.API/Controllers/AdminController.cs#L25-L29)) | Không giới hạn người quản lý |
-| **Phạm vi truy vấn dữ liệu** | Giới hạn nghiêm ngặt trong các bãi do Manager gọi API quản lý: `pmsContext.ParkingLots.Where(p => p.ManagerUserId == currentUserId && !p.IsDeleted)` | Toàn hệ thống: `pmsContext.ParkingLots.Where(p => !p.IsDeleted)` |
-| **Xử lý tham số `parkingLotId`** | **Tùy chọn**, nhưng **bắt buộc kiểm tra bảo mật**: Nếu Manager truyền `parkingLotId` mà mình không quản lý $\rightarrow$ Ném `ForbiddenException("You do not manage this parking lot.")` (HTTP 403). Nếu không truyền $\rightarrow$ Tổng hợp tất cả các bãi Manager đang quản lý. | **Tùy chọn**: Có thể truyền bất kỳ `parkingLotId` nào. Nếu bãi không tồn tại hoặc đã xóa $\rightarrow$ Ném `NotFoundException` (HTTP 404). Nếu không truyền $\rightarrow$ Tổng hợp toàn bộ bãi trong hệ thống. |
-| **Mục đích sử dụng chính** | Thẻ KPI Today's Revenue trên Manager Console, giám sát vận hành ca trực của Manager. | Báo cáo tài chính vĩ mô, biểu đồ so sánh doanh thu liên bãi của Quản trị viên hệ thống. |
+| **Route** | `GET /api/manager/reports/revenue` | `GET /api/admin/reports/revenue` |
+| **Controller** | `ManagerRevenueController.cs` | `AdminRevenueController.cs` |
+| **Authorize** | `[Authorize(Roles = "Manager")]` | `[Authorize(Roles = "Admin")]` |
+| **Phạm vi bãi xe** | Giới hạn nghiêm ngặt: `ParkingLots.Where(p => p.ManagerUserId == currentUserId && !p.IsDeleted)` | Toàn hệ thống: `ParkingLots.Where(p => !p.IsDeleted)` |
+| **Xử lý `parkingLotId`** | Bắt buộc kiểm tra quyền sở hữu. Nếu bãi không thuộc quyền quản lý $\rightarrow$ **HTTP 403 Forbidden**. Nếu Manager không có bãi nào $\rightarrow$ Trả về kết quả rỗng hợp lệ (HTTP 200). | Tùy chọn lọc. Nếu bãi không tồn tại hoặc đã xóa $\rightarrow$ **HTTP 404 Not Found**. |
+| **Hợp đồng Response** | `ManagerRevenueReportResponse` | `AdminRevenueReportResponse` |
+| **Response Envelope** | `ApiResult<ManagerRevenueReportResponse>` | `ApiResult<AdminRevenueReportResponse>` |
 
-### 4.2. Hợp đồng Response DTO Đề Xuất
+### 4.2. Chi Tiết Hợp Đồng DTO Phản Hồi
 
-#### A. Response Hợp đồng Manager API (`ManagerRevenueReportResponse`)
+#### A. Hợp đồng Manager API (`ManagerRevenueReportResponse`)
 ```json
 {
-  "success": true,
-  "data": {
-    "managerUserId": "mgr-uuid-001",
+  "succeeded": true,
+  "result": {
+    "managerUserId": "mgr-guid-123",
     "startDate": "2026-10-28",
     "endDate": "2026-10-28",
     "totalRevenue": 80000.0,
@@ -143,7 +144,8 @@ Trong cơ sở dữ liệu và mã nguồn backend:
         "parkingLotId": 1,
         "parkingLotName": "Bãi xe Landmark 81",
         "totalRevenue": 80000.0,
-        "totalSessions": 1
+        "totalSessions": 1,
+        "managerUserId": "mgr-guid-123"
       }
     ],
     "paymentMethods": [
@@ -158,15 +160,16 @@ Trong cơ sở dữ liệu và mã nguồn backend:
         "percentage": 37.5
       }
     ]
-  }
+  },
+  "errors": []
 }
 ```
 
-#### B. Response Hợp đồng Admin API (`AdminRevenueReportResponse`)
+#### B. Hợp đồng Admin API (`AdminRevenueReportResponse`)
 ```json
 {
-  "success": true,
-  "data": {
+  "succeeded": true,
+  "result": {
     "startDate": "2026-10-28",
     "endDate": "2026-10-28",
     "systemTotalRevenue": 1500000.0,
@@ -176,81 +179,105 @@ Trong cơ sở dữ liệu và mã nguồn backend:
       {
         "parkingLotId": 1,
         "parkingLotName": "Bãi xe Landmark 81",
-        "managerUserId": "mgr-uuid-001",
         "totalRevenue": 80000.0,
-        "totalSessions": 1
-      },
-      {
-        "parkingLotId": 2,
-        "parkingLotName": "Bãi xe Bitexco",
-        "managerUserId": "mgr-uuid-002",
-        "totalRevenue": 1420000.0,
-        "totalSessions": 44
+        "totalSessions": 1,
+        "managerUserId": "mgr-guid-123"
       }
     ],
     "paymentMethods": [
       {
         "method": "QR_BANKING",
         "amount": 1000000.0,
-        "percentage": 66.67
+        "percentage": 66.7
       },
       {
         "method": "CASH",
         "amount": 500000.0,
-        "percentage": 33.33
+        "percentage": 33.3
       }
     ]
-  }
+  },
+  "errors": []
 }
 ```
 
 ---
 
-## 5. Công Thức Tính Doanh Thu & Xử Lý Các Trường Hợp Ngoại Lệ
+## 5. Bảng Đối Soát 7 Trường Hợp Biên (Edge Cases)
 
-### 5.1. Công thức Doanh thu Slot
-Với danh sách bãi xe được phân quyền (`ScopedLotIds`) và khoảng thời gian truy vấn `[FromUtc, ToUtc)`:
-
-$$\text{Slot Revenue} = \sum_{\substack{s \in \text{ParkingSessions} \\ s.\text{ParkingLotId} \in \text{ScopedLotIds} \\ s.\text{Status} = \text{'Completed'} \\ s.\text{ExitTime} \ge \text{FromUtc} \land s.\text{ExitTime} < \text{ToUtc}}} s.\text{FinalFee}$$
-
-*(Trường hợp phiên thanh toán trước `Paid` qua App trong bãi đang chờ qua barrier: nếu tính vào doanh thu tức thời thì điều kiện là `s.Status IN ('Completed', 'Paid')` và mốc thời gian là `s.ExitTime ?? s.UpdatedAt`).*
-
-### 5.2. Bảng Đối Soát Toàn Diện 7 Trường Hợp Ngoại Lệ (Edge Cases)
-
-| STT | Trường hợp nghiệp vụ | Trạng thái kỹ thuật & Giá trị thực tế | Doanh thu slot ghi nhận | Giải thích cơ chế nghiệp vụ |
+| STT | Trường hợp nghiệp vụ | Trạng thái kỹ thuật & Giá trị thực tế | Doanh thu ghi nhận | Cơ chế giải quyết trong mã nguồn |
 | :---: | :--- | :--- | :---: | :--- |
-| **1** | **Khách có cọc bù trừ phí gửi xe** (Ví dụ: Tổng phí 80k, cọc 50k, trả thêm 30k) | `session.OriginalFee = 80000`<br>`session.DepositApplied = 50000`<br>`session.PaidAmount = 30000`<br>`session.FinalFee = 80000` | **80.000 VND** | Cọc 50k được chuyển hóa thành một phần phí gửi xe (`DepositApplied`). Doanh thu slot đúng bằng `FinalFee` (80.000 VND), không phải 30k và không phải 130k. |
-| **2** | **Cọc lớn hơn phí gửi xe, hoàn tiền thừa** (Ví dụ: Cọc 50k, phí gửi 40k, hoàn cọc 10k) | `session.DepositApplied = 40000`<br>`session.PaidAmount = 0`<br>`session.FinalFee = 40000`<br>`DepositRefund = 10000` (hoàn cọc qua payment) | **40.000 VND** | Bãi xe chỉ ghi nhận doanh thu slot theo dịch vụ thực tế đã cung cấp (`FinalFee` = 40.000 VND). 10.000 VND hoàn lại cho khách không làm ảnh hưởng `FinalFee`. |
-| **3** | **Khách hủy đặt chỗ hoặc không đến (Cancelled / No-Show)** | `Reservation.Status` = `Cancelled` hoặc `NoShow`. Không có `ParkingSession` nào hoàn tất. | **0 VND** | Theo yêu cầu: *"Không tính tiền cọc, tiền nạp ví, hoàn cọc hoặc các khoản thu không phải phí gửi xe"*. Tiền cọc giữ lại nếu có là khoản phạt vi phạm đặt chỗ, không phải doanh thu phí gửi xe của slot. |
-| **4** | **Xe đang đỗ hoặc đang chờ trả tiền (Active / PendingPayment)** | `session.Status IN ('Active', 'PendingPayment')`. Chưa hoàn tất thanh toán/chưa rời bãi. | **0 VND** | Doanh thu chưa thực hiện (unrealized revenue). Chỉ ghi nhận khi phiên đã hoàn tất dịch vụ. |
-| **5** | **Đóng bất thường / Thoát khẩn cấp (AbnormalClosed / EmergencyExit)** | Quản lý đóng phiên treo (`CloseAbnormallyAsync`) hoặc thoát khẩn cấp: phí được miễn (`Fee waived`), `FinalFee = 0`. | **0 VND** | Không phát sinh doanh thu thu từ khách hàng. |
-| **6** | **Miễn phí (Grace Period / Whitelist)** | `session.ZeroFeeReason` = `GracePeriod` (ra trong 15 phút) hoặc `Whitelist`. `FinalFee = 0`. | **0 VND** | Miễn phí gửi xe theo chính sách bãi. |
-| **7** | **Mất vé hoặc trễ hạn cửa ra (Lost ticket / Exit late fee)** | `settlement.LostTicketFee` hoặc `ExitWindowLateFee` được cộng gộp trực tiếp vào `session.FinalFee` ([`GateService.cs#L778`](file:///C:/DEV/OJT-FSA-Team3/parking-management-system/src/PMS.Application/Services/Impl/GateService.cs#L778)). | **Toàn bộ `FinalFee`** | Phí phạt mất thẻ / trễ giờ ra gắn liền với phiên gửi xe đó và là một phần cấu thành tổng phí slot mà khách phải thanh toán. |
-
-### 5.3. Cơ chế Phân Rã Phương Thức Thanh Toán (Payment Method Breakdown)
-Để bảo đảm tổng các phương thức thanh toán khớp chính xác với `totalRevenue` (80.000 VND):
-1. Phần trả thêm tại làn (`PaidAmount`): Map theo phương thức trên bản ghi `Payment` gắn với `SessionId` (Cash $\rightarrow$ `CASH`, Online $\rightarrow$ `QR_BANKING`, Wallet $\rightarrow$ `RFID_WALLET`).
-2. Phần cọc bù trừ (`DepositApplied`): Map theo phương thức trên bản ghi `Payment` gắn với `ReservationId` (Online $\rightarrow$ `QR_BANKING`, Wallet $\rightarrow$ `RFID_WALLET`).
-$$\sum \text{Phần Cọc} + \sum \text{Phần Trả thêm} = \sum \text{FinalFee} = \text{totalRevenue}$$
-Đảm bảo biểu đồ cơ cấu thanh toán trên Dashboard khớp 100% không bị lệch sổ.
+| **1** | **Khách có cọc bù trừ phí gửi xe** (Ví dụ: Tổng phí 80k, cọc 50k, trả thêm 30k) | `FinalFee = 80000`<br>`DepositApplied = 50000`<br>`PaidAmount = 30000` | **80.000 VND** | Cọc 50k được cấn trừ vào phí (`DepositApplied`). Doanh thu đúng bằng `FinalFee` (80.000 VND), không phải 30k hay 130k. |
+| **2** | **Cọc lớn hơn phí gửi xe, hoàn tiền thừa** (Ví dụ: Cọc 50k, phí gửi 40k, hoàn cọc 10k) | `DepositApplied = 40000`<br>`PaidAmount = 0`<br>`FinalFee = 40000`<br>`DepositRefund = 10000` | **40.000 VND** | Bãi xe chỉ ghi nhận doanh thu theo dịch vụ thực tế đã cung cấp (`FinalFee` = 40.000 VND). Tiền hoàn 10k không ảnh hưởng `FinalFee`. |
+| **3** | **Khách hủy đặt chỗ hoặc không đến (Cancelled / No-Show)** | `Reservation.Status` = `Cancelled` hoặc `NoShow`. Không có `ParkingSession` nào hoàn tất. | **0 VND** | Tuyệt đối không tính tiền cọc phạt vào doanh thu slot gửi xe của bãi. |
+| **4** | **Xe đang đỗ hoặc đang chờ trả tiền (Active / PendingPayment)** | `session.Status IN ('Active', 'PendingPayment')`. Chưa hoàn tất thanh toán/chưa rời bãi. | **0 VND** | Doanh thu chưa thực hiện (unrealized revenue). Bị loại trừ khỏi tập truy vấn. |
+| **5** | **Đóng bất thường / Thoát khẩn cấp (AbnormalClosed / EmergencyExit)** | Quản lý đóng phiên treo (`CloseAbnormallyAsync`) hoặc thoát khẩn cấp: phí được miễn (`Fee waived`), `FinalFee = 0`. | **0 VND** | Đóng góp 0.00 VND vào tổng doanh thu. |
+| **6** | **Miễn phí (Grace Period / Whitelist)** | `session.ZeroFeeReason` = `GracePeriod` hoặc `Whitelist`. `FinalFee = 0`. | **0 VND** | Miễn phí gửi xe theo chính sách. |
+| **7** | **Mất vé hoặc trễ hạn cửa ra (Lost ticket / Exit late fee)** | `settlement.LostTicketFee` hoặc `ExitWindowLateFee` được cộng gộp trực tiếp vào `session.FinalFee` (`GateService.cs#L778`). | **Toàn bộ `FinalFee`** | Phí phạt gắn liền với phiên gửi xe và là một phần cấu thành tổng phí slot mà khách phải thanh toán. |
 
 ---
 
-## 6. Kế Hoạch Triển Khai Tiếp Theo (Implementation Plan)
+## 6. Cơ Chế Phân Rã Phương Thức Thanh Toán (Payment-Method Breakdown)
 
-### 6.1. Danh sách file dự kiến tạo mới / chỉnh sửa
-1. `src/PMS.Application/Models/Reports/RevenueReportModels.cs`: Cập nhật DTO request/response phân tách riêng cho Manager và Admin.
-2. `src/PMS.Application/Services/IRevenueReportService.cs`: Khai báo 2 phương thức riêng biệt `GetManagerRevenueAsync` và `GetAdminRevenueAsync`.
-3. `src/PMS.Application/Services/Impl/RevenueReportService.cs`: Chuyển đổi toàn bộ nguồn truy vấn từ `dbo.Payments` sang `dbo.ParkingSessions.FinalFee`, tích hợp kiểm tra bảo mật bãi của Manager.
-4. `src/PMS.API/Controllers/ManagerRevenueController.cs`: Controller riêng cho Manager tại route `[Route("api/manager/reports/revenue")]` với `[Authorize(Roles = "Manager")]`.
-5. `src/PMS.API/Controllers/AdminRevenueController.cs`: Controller riêng cho Admin tại route `[Route("api/admin/reports/revenue")]` với `[Authorize(Roles = "Admin")]`.
-6. Unit Tests & Integration Tests:
-   - `tests/PMS.Application.UnitTests/Operations/RevenueReportServiceTests.cs`: Kiểm thử toàn bộ công thức `FinalFee`, bù trừ cọc, hoàn cọc thừa, No-Show và phân quyền.
-   - `tests/PMS.Api.IntegrationTests/Tests/ReportsEndpointTests.cs`: Kiểm thử 2 endpoint độc lập, kiểm tra chặn 403 Forbidden khi Manager truy cập bãi xe không phụ trách.
+Mỗi phiên đỗ xe hoàn tất được phân bổ phương thức thanh toán cấu thành:
+1. **Phần trả thêm tại chỗ (`PaidAmount`):**
+   Liên kết với bản ghi `Payment` có `SessionId == session.Id` và `Purpose == PaymentPurpose.ParkingFee`:
+   - `PaymentMethod.Cash` ("Cash") $\rightarrow$ `CASH`
+   - `PaymentMethod.Online` ("Online") $\rightarrow$ `QR_BANKING`
+   - `PaymentMethod.Wallet` ("Wallet") $\rightarrow$ `RFID_WALLET`
+2. **Phần bù trừ từ tiền cọc (`DepositApplied`):**
+   Liên kết với bản ghi `Payment` có `ReservationId == session.ReservationId` và `Purpose == PaymentPurpose.Deposit`:
+   - `PaymentMethod.Online` $\rightarrow$ `QR_BANKING`
+   - `PaymentMethod.Wallet` $\rightarrow$ `RFID_WALLET`
+3. **An toàn dữ liệu:**
+   - Giá trị phương thức thanh toán không nhận diện được map sang `OTHER`, không bị ép sai thành `QR_BANKING`.
+   - Xử lý chia cho 0 an toàn khi tổng doanh thu bằng 0 (`percentage = 0m`).
+   - Đảm bảo đẳng thức tài chính:
+     $$\sum \text{QR\_BANKING} + \sum \text{RFID\_WALLET} + \sum \text{CASH} + \sum \text{OTHER} = \text{totalRevenue}$$
 
 ---
 
-## 7. Bảng Đối Soát Tệp Tin Mã Nguồn Thực Tế (Source Traceability Matrix)
+## 7. Chi Tiết File Mã Nguồn Đã Triển Khai
+
+| STT | File mã nguồn | Loại thay đổi | Trách nhiệm |
+| :---: | :--- | :---: | :--- |
+| **1** | `src/PMS.Application/Models/Reports/RevenueReportModels.cs` | Tạo mới | Định nghĩa các DTO: `ParkingLotRevenueModel`, `PaymentMethodBreakdownModel`, `ManagerRevenueReportResponse`, `AdminRevenueReportResponse`. |
+| **2** | `src/PMS.Application/Services/IRevenueReportService.cs` | Tạo mới | Khai báo 2 phương thức: `GetManagerRevenueAsync` và `GetAdminRevenueAsync`. |
+| **3** | `src/PMS.Application/Services/Impl/RevenueReportService.cs` | Tạo mới | Xử lý logic truy vấn dữ liệu từ `ParkingSession.FinalFee`, kiểm tra phân quyền Manager, phân rã phương thức thanh toán. |
+| **4** | `src/PMS.API/Controllers/ManagerRevenueController.cs` | Tạo mới | Controller cho Manager tại `GET /api/manager/reports/revenue`, `[Authorize(Roles = "Manager")]`. |
+| **5** | `src/PMS.API/Controllers/AdminRevenueController.cs` | Tạo mới | Controller cho Admin tại `GET /api/admin/reports/revenue`, `[Authorize(Roles = "Admin")]`. |
+| **6** | `src/PMS.Application/OperationsDependencyInjection.cs` | Sửa đổi | Đăng ký `services.AddScoped<IRevenueReportService, RevenueReportService>();`. |
+| **7** | `tests/PMS.Application.UnitTests/Operations/RevenueReportServiceTests.cs` | Tạo mới | 16 bài kiểm thử đơn vị cho toàn bộ các trường hợp biên tài chính, công thức cọc bù trừ, phân quyền Manager/Admin. |
+| **8** | `tests/PMS.Api.IntegrationTests/Tests/ReportsEndpointTests.cs` | Tạo mới | 8 bài kiểm thử tích hợp API qua HTTP cho cả 2 endpoint Manager và Admin (bao gồm xác thực token, kiểm tra chặn 403, 404, 400, 401). |
+
+---
+
+## 8. Kết Quả Kiểm Thử Thực Tế (Automated Test Execution Results)
+
+### 8.1. Unit Tests (`PMS.Application.UnitTests`)
+- **Lệnh thực thi:** `dotnet test tests/PMS.Application.UnitTests/PMS.Application.UnitTests.csproj --filter 'FullyQualifiedName~RevenueReportServiceTests'`
+- **Kết quả:** **16 / 16 PASSED** (100% pass rate, 0 failed, 0 skipped, thời gian: 885 ms).
+- **Bộ test toàn bộ dự án Application:** **413 / 413 PASSED** (0 failed).
+
+### 8.2. Integration Tests (`PMS.Api.IntegrationTests`)
+- **Lệnh thực thi:** `dotnet test tests/PMS.Api.IntegrationTests/PMS.Api.IntegrationTests.csproj --filter 'FullyQualifiedName~ReportsEndpointTests'`
+- **Kết quả:** **8 / 8 PASSED** (100% pass rate, 0 failed, 0 skipped, thời gian: 6 s).
+  - `AdminReport_AsAdmin_ReturnsOk_WithAdminRevenueResponse`: 200 OK.
+  - `AdminReport_WithNonexistentLot_ReturnsNotFound`: 404 Not Found.
+  - `AdminReport_WithInvalidDateFormat_ReturnsBadRequest`: 400 Bad Request.
+  - `ManagerReport_AsManager_ReturnsOk_WithManagerRevenueResponse`: 200 OK.
+  - `ManagerReport_RequestingOtherLot_ReturnsForbidden`: 403 Forbidden.
+  - `ManagerReport_Unauthenticated_ReturnsUnauthorized`: 401 Unauthorized.
+  - `ManagerReport_AsStaff_ReturnsForbidden`: 403 Forbidden.
+  - `AdminReport_AsManager_ReturnsForbidden`: 403 Forbidden.
+
+### 8.3. Biên dịch Solution (`PMS.sln`)
+- **Lệnh thực thi:** `dotnet build PMS.sln`
+- **Kết quả:** `Build succeeded. 0 Warning(s), 0 Error(s).`
+
+---
+
+## 9. Bảng Đối Soát Tệp Tin Mã Nguồn Thực Tế (Source Traceability Matrix)
 
 | Hạng mục nghiệp vụ | Tệp tin mã nguồn thực tế | Dòng code kiểm chứng |
 | :--- | :--- | :--- |
@@ -260,3 +287,4 @@ $$\sum \text{Phần Cọc} + \sum \text{Phần Trả thêm} = \sum \text{FinalFe
 | **Hoàn tất phiên & hoàn cọc thừa** | `src/PMS.Application/Services/Impl/GateService.cs` | Line 450–488 (`session.Status = Completed; RefundDepositAsync(...)`) |
 | **Phân quyền bãi của Manager (1:N)** | `src/PMS.Application/Services/Impl/EmployeeAccountService.cs`<br>`src/PMS.Application/Services/Impl/LotScopeService.cs` | `EmployeeAccountService.cs#L217-218`<br>`LotScopeService.cs#L29-35` |
 | **Tiền lệ tính tổng chi tiêu slot** | `src/PMS.Application/Services/Impl/ParkingHistoryService.cs` | Line 48 (`await sessions.SumAsync(s => s.FinalFee);`) |
+| **Bảo mật Exception Middleware** | `src/PMS.API/Middleware/ExceptionHandlingMiddleware.cs` | Line 35–43 (Chuyển đổi ForbiddenException $\rightarrow$ 403, NotFoundException $\rightarrow$ 404, BadRequestException $\rightarrow$ 400) |
