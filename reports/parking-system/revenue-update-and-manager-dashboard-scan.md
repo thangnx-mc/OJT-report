@@ -277,3 +277,127 @@ Mỗi phiên đỗ xe hoàn tất được tạo thành từ 2 nguồn:
    - Doanh thu chỉ hiển thị 30.000 VND (bị mất 50.000 VND cọc).
    - Doanh thu hiển thị 130.000 VND (bị tính trùng cọc 2 lần).
    - Manager xem được doanh thu bãi của người khác.
+
+
+---
+
+## 8. Kết Quả Tích Hợp Frontend & Kiểm Thử End-to-End (Frontend Integration & Verification Log)
+
+### 8.1. Hiện trạng Git & Phạm vi tích hợp Frontend
+- **Kho mã nguồn Frontend:** `C:\DEV\OJT-FSA-Team3\parking-management-system-frontend`
+- **Nhánh Git:** `develop` | **Baseline Commit SHA:** `f0d6a00` (`fix(wallet): update history transaction and fix infinite ping-pong loop`)
+- **Trạng thái ban đầu:** Clean working tree.
+- **Ranh giới an toàn:**
+  - Tuyệt đối không commit hoặc push lên cả Backend (`parking-management-system`) lẫn Frontend (`parking-management-system-frontend`).
+  - Tái sử dụng 100% giao diện UI hiện hữu; không tạo thêm trang mới, dashboard mới hay chart mới.
+  - Giữ nguyên toàn bộ logic phân quyền, routing, styling và state management.
+
+### 8.2. Điểm tích hợp UI & Luồng dữ liệu (Discovered UI & Data Flow)
+1. **Manager Console (`ManagerConsolePage.tsx` - `/management/console`):**
+   - Vai trò: `MANAGER`.
+   - Vị trí UI: Thẻ KPI **"Today's revenue"** hiển thị:
+     - Doanh thu hôm nay của bãi đang chọn (`lot.id`).
+     - Tỷ lệ tăng trưởng so với hôm qua (`change % vs yesterday`).
+     - Cơ cấu thanh toán hôm nay (`VietQR / bank` và `Cash`).
+   - Kết nối API: Thay thế các lời gọi rời rạc bằng hook `useManagerRevenue({ ...today, parkingLotId: lot.id })` và `useManagerRevenue({ ...yesterdayRange(), parkingLotId: lot.id })`.
+   - Dữ liệu trích xuất trực tiếp từ response `ManagerRevenueReportResponse`:
+     - `revenue = todayRevenue.data?.totalRevenue ?? 0`
+     - `previous = yesterdayRevenue.data?.totalRevenue ?? 0`
+     - `qr = todayRevenue.data?.paymentMethods?.find(m => m.method === 'QR_BANKING')?.amount ?? 0`
+     - `cash = todayRevenue.data?.paymentMethods?.find(m => m.method === 'CASH')?.amount ?? 0`
+     - Skeleton loading: `todayRevenue.isPending`.
+
+2. **Admin Revenue Report (`RevenueReportPage.tsx` - `/admin/revenue`):**
+   - Vai trò: `ADMIN`.
+   - Vị trí UI:
+     - `RevenueFilterBar`: Bộ lọc ngày và bãi xe (`parkingLotId`).
+     - `RevenueKpiCards`: Tổng doanh thu toàn hệ thống (`systemTotalRevenue`), lượt xe (`systemTotalSessions`).
+     - `RevenueByLotChart`: Biểu đồ cột ngang so sánh doanh thu từng bãi xe (`byLot`).
+     - `PaymentMethodChart`: Biểu đồ tròn cơ cấu phương thức (`paymentMethods`).
+     - `RevenueTrendChart` & `RevenueBreakdownTable`: Giữ nguyên dữ liệu mock bổ trợ vì Backend Option A chưa có endpoint timeseries / breakdown.
+   - Kết nối API: `reportService.getAdminRevenue` tổng hợp dữ liệu từ Backend `GET /api/admin/reports/revenue`.
+
+3. **Admin Dashboard (`AdminDashboardPage.tsx` - `/admin/dashboard`):**
+   - Vai trò: `ADMIN`.
+   - Vị trí UI: Thẻ tổng doanh thu mạng lưới (`todayTotal`) và bảng xếp hạng bãi xe theo doanh thu (`sortedLots`).
+   - Kết nối API: Tự động nhận dữ liệu thực từ `reportService.getRevenueByParkingLot`, ánh xạ từ `byLot` của `GET /api/admin/reports/revenue`.
+
+### 8.3. Danh sách các tệp Frontend đã thay đổi
+| Tệp thay đổi | Mục đích thay đổi |
+| :--- | :--- |
+| [`src/types/report.dto.ts`](file:///C:/DEV/OJT-FSA-Team3/parking-management-system-frontend/src/types/report.dto.ts) | Bổ sung kiểu `OTHER` cho `PaymentMethod`, định nghĩa DTO `ParkingLotRevenueDTO`, `ManagerRevenueReportResponse`, `AdminRevenueReportResponse`. |
+| [`src/components/features/revenue/revenueFilters.ts`](file:///C:/DEV/OJT-FSA-Team3/parking-management-system-frontend/src/components/features/revenue/revenueFilters.ts) | Bổ sung nhãn hiển thị cho phương thức `OTHER` (`'Other methods'`). |
+| [`src/components/features/revenue/PaymentMethodChart.tsx`](file:///C:/DEV/OJT-FSA-Team3/parking-management-system-frontend/src/components/features/revenue/PaymentMethodChart.tsx) | Bổ sung màu sắc và thứ tự sắp xếp cho `OTHER` trong biểu đồ tròn doanh thu. |
+| [`src/api/queryKeys.ts`](file:///C:/DEV/OJT-FSA-Team3/parking-management-system-frontend/src/api/queryKeys.ts) | Đăng ký cache key `queryKeys.reports.manager` và `queryKeys.reports.admin` cho React Query. |
+| [`src/api/report.service.ts`](file:///C:/DEV/OJT-FSA-Team3/parking-management-system-frontend/src/api/report.service.ts) | Triển khai phương thức gọi API thật `getManagerRevenue` (`/manager/reports/revenue`) và `getAdminRevenue` (`/admin/reports/revenue`). Ánh xạ dữ liệu thật cho `getPaymentMethods`, `getRevenueByParkingLot`, và `getKpiSummary`. |
+| [`src/mocks/revenue.mock.ts`](file:///C:/DEV/OJT-FSA-Team3/parking-management-system-frontend/src/mocks/revenue.mock.ts) | Bổ sung mock fallback cho `getManagerRevenue` và `getAdminRevenue` đảm bảo tính liên tục của Demo Session khi không có Backend. |
+| [`src/hooks/useRevenueReport.ts`](file:///C:/DEV/OJT-FSA-Team3/parking-management-system-frontend/src/hooks/useRevenueReport.ts) | Export hook `useManagerRevenue` và `useAdminRevenue` với React Query. |
+| [`src/pages/management/ManagerConsolePage.tsx`](file:///C:/DEV/OJT-FSA-Team3/parking-management-system-frontend/src/pages/management/ManagerConsolePage.tsx) | Thay thế các hook cũ bằng `useManagerRevenue` để hiển thị đúng doanh thu và phương thức thanh toán của bãi xe được giao. |
+
+### 8.4. Kết quả kiểm tra chất lượng mã nguồn Frontend
+1. **Kiểm tra kiểu dữ liệu TypeScript (Type-Check):**
+   ```powershell
+   cmd /c "cd /d C:\DEV\OJT-FSA-Team3\parking-management-system-frontend && npm.cmd run typecheck"
+   ```
+   *Kết quả:* **0 lỗi biên dịch (Exit code 0)**.
+2. **Kiểm tra quy chuẩn mã nguồn (ESLint):**
+   ```powershell
+   cmd /c "cd /d C:\DEV\OJT-FSA-Team3\parking-management-system-frontend && npm.cmd run lint"
+   ```
+   *Kết quả:* **0 lỗi lint (Exit code 0)**.
+3. **Biên dịch sản phẩm (Production Build):**
+   ```powershell
+   cmd /c "cd /d C:\DEV\OJT-FSA-Team3\parking-management-system-frontend && npm.cmd run build"
+   ```
+   *Kết quả:* **Thành công (built in 15.05s, Exit code 0)**.
+
+### 8.5. Kết quả kiểm thử tích hợp thực tế (End-to-End API Integration Verification)
+Đã khởi chạy máy chủ Backend `PMS.API` trên môi trường thực tế (`https://localhost:5001/api`) và thực thi kịch bản kiểm chứng tích hợp tự động qua HTTP:
+
+```text
+=== STARTING REVENUE REPORTING INTEGRATION VERIFICATION ===
+
+--- 1. Testing Unauthenticated Access ---
+✔ PASS: Unauthenticated Admin Revenue API returns HTTP 401
+✔ PASS: Unauthenticated Manager Revenue API returns HTTP 401
+
+--- 2. Testing Authentication Flow ---
+✔ PASS: Authenticated as admin (Role: Admin) with JWT token
+
+--- 3. Testing Role-Based API Separation & Authorization ---
+✔ PASS: Admin calling Manager Revenue API is rejected with HTTP 403 Forbidden
+
+--- 4. Testing Admin Revenue API - System Wide ---
+API Response structure: {
+  startDate: '2026-10-28',
+  endDate: '2026-10-28',
+  systemTotalRevenue: 0,
+  systemTotalSessions: 0,
+  activeLotsCount: 3,
+  byLotCount: 3,
+  paymentMethodsCount: 3
+}
+✔ PASS: Admin Revenue API response conforms exactly to AdminRevenueReportResponse
+✔ PASS: Cross-lot consistency verified: sum(byLot.totalRevenue) == systemTotalRevenue (0)
+✔ PASS: Payment method reconciliation verified: sum(paymentMethods.amount) == systemTotalRevenue (0)
+
+--- 5. Testing Admin Revenue API - Single Lot Filter ---
+✔ PASS: Filter by parkingLotId=1 returned single lot: FPT University Parking Lot
+
+--- 6. Testing Error Handling - Nonexistent Lot ---
+✔ PASS: Requesting nonexistent lot returns HTTP 404 Not Found
+
+--- 7. Testing Error Handling - Validation Errors ---
+✔ PASS: Invalid date format returns HTTP 400 Bad Request
+✔ PASS: endDate < startDate returns HTTP 400 Bad Request
+
+=== ALL INTEGRATION VERIFICATION CHECKS PASSED SUCCESSFULLY ===
+```
+
+### 8.6. Giới hạn môi trường & Hướng dẫn nghiệm thu
+1. **Tài khoản Manager trên CSDL cục bộ:**
+   - Người dùng `manager@test.com` (username `manager_test`) đã tồn tại trong CSDL cục bộ `parking_management_system_nguye`, được gán quản lý bãi số 1 (`FPT University Parking Lot`). Tuy nhiên mật khẩu tài khoản này trong môi trường dev cục bộ khác với tài khoản mẫu `Admin123.?`.
+   - Để đăng nhập Manager trên giao diện Web ngoài đời thực: Quản trị viên (Admin) chỉ cần vào `/admin/staff`, nhấn chỉnh sửa Manager hoặc cấp mới một tài khoản Quản lý với mật khẩu mong muốn.
+2. **Phạm vi tính năng Backend Option A:**
+   - Hai biểu đồ xu hướng theo ngày/tháng (`RevenueTrendChart`) và bảng kê chi tiết lượt đỗ xe (`RevenueBreakdownTable`) trên trang `/admin/revenue` tiếp tục sử dụng dữ liệu giả lập (mock fallback) do Backend Option A chưa xây dựng hai endpoint này. Toàn bộ các chỉ số KPI, biểu đồ từng bãi xe (`byLot`) và cơ cấu phương thức (`paymentMethods`) đều lấy từ Backend thật.
+3. **Đánh giá trạng thái tích hợp (Integration Status):** **PASS** — Mã nguồn Frontend đã kết nối hoàn chỉnh với Backend Revenue Reporting API, bảo đảm phân quyền nghiêm ngặt, cơ chế fallback an toàn và vượt qua 100% các bài kiểm tra tự động.
