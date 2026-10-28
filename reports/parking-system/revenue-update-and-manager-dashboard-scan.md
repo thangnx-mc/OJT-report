@@ -396,8 +396,100 @@ API Response structure: {
 
 ### 8.6. Giới hạn môi trường & Hướng dẫn nghiệm thu
 1. **Tài khoản Manager trên CSDL cục bộ:**
-   - Người dùng `manager@test.com` (username `manager_test`) đã tồn tại trong CSDL cục bộ `parking_management_system_nguye`, được gán quản lý bãi số 1 (`FPT University Parking Lot`). Tuy nhiên mật khẩu tài khoản này trong môi trường dev cục bộ khác với tài khoản mẫu `Admin123.?`.
-   - Để đăng nhập Manager trên giao diện Web ngoài đời thực: Quản trị viên (Admin) chỉ cần vào `/admin/staff`, nhấn chỉnh sửa Manager hoặc cấp mới một tài khoản Quản lý với mật khẩu mong muốn.
+   - Người dùng `manager@test.com` (username `manager_test`) đã tồn tại trong CSDL cục bộ `parking_management_system_nguye`, được gán quản lý bãi số 1 (`FPT University Parking Lot`).
+   - Mật khẩu của tài khoản `manager_test` đã được đồng bộ chuẩn với tài khoản quản trị `Admin123.?` phục vụ chạy thử nghiệm cục bộ trơn tru.
 2. **Phạm vi tính năng Backend Option A:**
    - Hai biểu đồ xu hướng theo ngày/tháng (`RevenueTrendChart`) và bảng kê chi tiết lượt đỗ xe (`RevenueBreakdownTable`) trên trang `/admin/revenue` tiếp tục sử dụng dữ liệu giả lập (mock fallback) do Backend Option A chưa xây dựng hai endpoint này. Toàn bộ các chỉ số KPI, biểu đồ từng bãi xe (`byLot`) và cơ cấu phương thức (`paymentMethods`) đều lấy từ Backend thật.
 3. **Đánh giá trạng thái tích hợp (Integration Status):** **PASS** — Mã nguồn Frontend đã kết nối hoàn chỉnh với Backend Revenue Reporting API, bảo đảm phân quyền nghiêm ngặt, cơ chế fallback an toàn và vượt qua 100% các bài kiểm tra tự động.
+
+---
+
+## 9. Báo Cáo Triển Khai Thực Tế Cục Bộ & Xác Minh Toàn Diện Hệ Thống (Local Deployment & E2E System Verification)
+
+- **Ngày thực hiện:** 2026-10-28
+- **Mục tiêu:** Khởi chạy toàn bộ hệ thống bãi đỗ xe cục bộ (Backend .NET 9 API, Frontend React 19 Vite, LocalDB SQL Server), chẩn đoán và khắc phục dứt điểm các lỗi CSDL/cấu hình, và chạy bộ kiểm thử tích hợp toàn diện 20 ca kiểm tra.
+- **Trạng thái thực thi:** **THÀNH CÔNG TOÀN BỘ (ALL 20 CHECKS PASSED)**
+
+### 9.1. Chẩn đoán & Xử lý lỗi CSDL Cục bộ (Database Diagnosis & Resolution)
+
+Khi kết nối vào CSDL cục bộ `(localdb)\mssqllocaldb` (tên CSDL theo quy ước user: `parking_management_system_nguye`), quá trình kiểm tra đã phát hiện và xử lý thành công 2 sự cố:
+
+1. **Sự cố 1: Lỗi Hangfire Background Job sập liên tục do thiếu bảng `RefreshTokens` (SQL Error 208)**
+   - *Triệu chứng:* Ngay sau khi khởi chạy `PMS.API`, tác vụ nền `LotJobs.CleanupExpiredCredentialsAsync` liên tục văng ngoại lệ:
+     `Microsoft.Data.SqlClient.SqlException (0x80131904): Invalid object name 'RefreshTokens'.`
+   - *Nguyên nhân gốc rễ:* Entity `RefreshToken` được định nghĩa trong mô hình `PmsDbContext`, nhưng mã nguồn tạo bảng tự động trong [`AutomatedMigration.cs`](file:///C:/DEV/OJT-FSA-Team3/parking-management-system/src/PMS.DataAccess/Persistence/AutomatedMigration.cs) bị thiếu kịch bản DDL khởi tạo bảng `RefreshTokens`.
+   - *Giải pháp triệt để:*
+     - Khởi tạo bảng `[dbo].[RefreshTokens]` trực tiếp trên CSDL cục bộ với đầy đủ khóa ngoại `UserId` tham chiếu `Users(Id)` và các chỉ mục hiệu năng (`IX_RefreshTokens_Token`, `IX_RefreshTokens_UserId`).
+     - Cập nhật [`src/PMS.DataAccess/Persistence/AutomatedMigration.cs`](file:///C:/DEV/OJT-FSA-Team3/parking-management-system/src/PMS.DataAccess/Persistence/AutomatedMigration.cs#L450) bổ sung đoạn mã DDL tự động và an toàn (idempotent `IF OBJECT_ID('dbo.RefreshTokens', 'U') IS NULL`), bảo đảm bất kỳ lập trình viên nào khởi tạo CSDL mới cũng không gặp lại lỗi này.
+   - *Kết quả:* Hangfire server khởi động toàn bộ dispatchers (`ServerWatchdog`, `Worker`, `DelayedJobScheduler`, `RecurringJobScheduler`) sạch sẽ, không còn ngoại lệ SQL Error 208.
+
+2. **Sự cố 2: Xác thực tài khoản Manager cục bộ**
+   - *Triệu chứng:* Tài khoản Quản lý `manager@test.com` (`manager_test`) đã tồn tại và được gán quản lý bãi số 1 (`FPT University Parking Lot`), nhưng không thể đăng nhập do mật khẩu khởi tạo ngẫu nhiên từ trước không khớp với bộ thông tin kiểm thử dev chuẩn.
+   - *Giải pháp:* Đồng bộ hóa hash mật khẩu của `manager_test` trùng khớp với tài khoản `admin` (`Admin123.?`), giúp các luồng tự động và người dùng có thể đăng nhập ngay mà không cần can thiệp thủ công.
+
+### 9.2. Khởi chạy Dịch vụ & Cấu hình Cổng Mạng (Services & Multi-Port Startup)
+
+Hệ thống được vận hành đồng thời trên môi trường cục bộ:
+
+1. **Backend API (.NET 9 Kestrel Server):**
+   - Lệnh khởi chạy:
+     ```bash
+     dotnet run --project "C:\DEV\OJT-FSA-Team3\parking-management-system\src\PMS.API\PMS.API.csproj" --no-build --urls "https://localhost:44391;https://localhost:5001;http://localhost:5000"
+     ```
+   - Cổng kích hoạt:
+     - `https://localhost:44391`: Cổng mặc định của Frontend client (`DEFAULT_API_BASE_URL` trong `src/config/env.ts`).
+     - `https://localhost:5001` & `http://localhost:5000`: Cổng mặc định của launch profile Kestrel.
+   - Trạng thái: Background Daemon Process (Task ID: `task-7197`).
+   - Swagger Documentation: Sẵn sàng tại `https://localhost:44391/swagger` và `https://localhost:5001/swagger`.
+
+2. **Frontend Application (React 19, TypeScript, Vite 7):**
+   - Lệnh khởi chạy:
+     ```bash
+     cmd.exe /c "cd /d C:\DEV\OJT-FSA-Team3\parking-management-system-frontend && npm.cmd run dev"
+     ```
+   - Cổng kích hoạt: `http://localhost:5173`
+   - Cấu hình môi trường (`.env`):
+     - `VITE_API_BASE_URL=https://localhost:44391/api`
+     - `VITE_USE_MOCK_DATA=false`
+     - `VITE_MOCK_SERVICES=capacity` (Chỉ mock service capacity; service reports gọi Backend thật).
+   - Trạng thái: Background Daemon Process (Task ID: `task-7240`), HMR sẵn sàng.
+
+### 9.3. Bảng Kiểm Thử Xác Minh Toàn Diện Hệ Thống (E2E Verification Matrix)
+
+Kịch bản kiểm thử tự động 20 hạng mục đã được thực thi trực tiếp đối với toàn bộ các cổng và dịch vụ đang chạy:
+
+| STT | Phân hệ / Nghiệp vụ | Endpoint / Hành động | Phương thức | Kết quả thực tế | Trạng thái |
+|:---:|:---|:---|:---:|:---|:---:|
+| 1 | Xác thực Quản trị viên | `/api/Users/authenticate` (`admin@admin.com`) | POST | HTTP 200 OK, JWT Bearer Token, Role: `Admin` | **PASS** |
+| 2 | Xác thực Quản lý bãi | `/api/Users/authenticate` (`manager@test.com`) | POST | HTTP 200 OK, JWT Bearer Token, Role: `Manager` | **PASS** |
+| 3 | Hồ sơ người dùng Admin | `/api/Users/profile` | GET | HTTP 200 OK, FullName: `admin` | **PASS** |
+| 4 | Hồ sơ người dùng Manager | `/api/Users/profile` | GET | HTTP 200 OK, FullName: `manager_test` | **PASS** |
+| 5 | Bãi đỗ xe công khai | `/api/public/lots` | GET | HTTP 200 OK, Trả về 3 bãi đỗ xe công khai | **PASS** |
+| 6 | Quản lý bãi đỗ xe (Admin) | `/api/lots` | GET | HTTP 200 OK, Trả về đủ 3 bãi đỗ (FPTU 150 slot, Fsoft 120 slot, Cong Hoa 60 slot) | **PASS** |
+| 7 | Bãi được giao cho Manager | `/api/manager/lots` | GET | HTTP 200 OK, Trả về đúng 1 bãi được phân quyền: Lot 1 (FPT University) | **PASS** |
+| 8 | Nhân viên bãi xe (Manager) | `/api/manager/staff` | GET | HTTP 200 OK, Phân quyền bãi của Manager hợp lệ | **PASS** |
+| 9 | Quản lý tài khoản Manager (Admin) | `/api/admin/managers` | GET | HTTP 200 OK, Danh sách 1 Manager đang hoạt động | **PASS** |
+| 10 | Quản lý người dùng nội bộ (Admin) | `/api/admin/users` | GET | HTTP 200 OK, Trả về danh sách tài khoản nội bộ | **PASS** |
+| 11 | Danh sách đặt chỗ trước Lot 1 | `/api/manager/lots/1/reservations` | GET | HTTP 200 OK, Truy vấn đặt chỗ bãi được giao thành công | **PASS** |
+| 12 | Danh sách biển số Whitelist/Blacklist | `/api/manager/lots/1/plate-lists` | GET | HTTP 200 OK, Truy vấn danh sách biển số bãi 1 thành công | **PASS** |
+| 13 | Báo cáo doanh thu Manager (Tổng quát) | `/api/manager/reports/revenue` | GET | HTTP 200 OK, Tự động giới hạn đúng trong bãi được giao (Lot 1) | **PASS** |
+| 14 | Báo cáo doanh thu Manager (Theo Lot 1) | `/api/manager/reports/revenue?parkingLotId=1` | GET | HTTP 200 OK, Phản hồi thành công cho bãi sở hữu | **PASS** |
+| 15 | Cô lập dữ liệu Manager (Lot 2 không thuộc quyền) | `/api/manager/reports/revenue?parkingLotId=2` | GET | **HTTP 403 Forbidden**, Thông báo: "You do not manage this parking lot." | **PASS** |
+| 16 | Báo cáo doanh thu Admin (Toàn hệ thống) | `/api/admin/reports/revenue` | GET | HTTP 200 OK, Tổng hợp đủ 3 bãi đang hoạt động | **PASS** |
+| 17 | Báo cáo doanh thu Admin (Lọc theo Lot 2) | `/api/admin/reports/revenue?parkingLotId=2` | GET | HTTP 200 OK, Lọc thành công bãi số 2 (Fsoft Parking Lot) | **PASS** |
+| 18 | Cô lập vai trò (Manager gọi Admin API) | `/api/admin/reports/revenue` với token Manager | GET | **HTTP 403 Forbidden**, Chặn truy cập trái quyền | **PASS** |
+| 19 | Cô lập vai trò (Admin gọi Manager API) | `/api/manager/reports/revenue` với token Admin | GET | **HTTP 403 Forbidden**, Chặn truy cập trái quyền | **PASS** |
+| 20 | Ứng dụng giao diện Frontend | `http://localhost:5173` | GET | HTTP 200 OK, Vite Dev Server phản hồi HTML trang web | **PASS** |
+
+### 9.4. Thông Tin Tài Khoản Thử Nghiệm Cục Bộ (Local Test Credentials)
+
+| Vai trò | Email đăng nhập | Tên người dùng | Mật khẩu mẫu | Bãi đỗ xe quản lý |
+|:---|:---|:---|:---|:---|
+| **Admin** | `admin@admin.com` | `admin` | `Admin123.?` | Toàn hệ thống (Tất cả 3 bãi) |
+| **Manager** | `manager@test.com` | `manager_test` | `Admin123.?` | Bãi 1: FPT University Parking Lot (`LOT-FPTU-01`) |
+
+### 9.5. Tuân Thủ Ranh Giới Git (Git Boundary Compliance)
+
+- **Mã nguồn Backend (`parking-management-system`):** Tuyệt đối không thực hiện commit, push, reset hay checkout phá hủy. Giữ nguyên 100% các file đang trong vùng làm việc.
+- **Mã nguồn Frontend (`parking-management-system-frontend`):** Tuyệt đối không commit hay push. Giữ nguyên toàn bộ 8 file tích hợp giao diện.
+- **Kho báo cáo (`thangnx-mc/OJT-report`):** Cam kết và đẩy cập nhật duy nhất tài liệu báo cáo kỹ thuật này lên nhánh `main`.
