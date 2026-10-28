@@ -493,3 +493,103 @@ Kịch bản kiểm thử tự động 20 hạng mục đã được thực thi 
 - **Mã nguồn Backend (`parking-management-system`):** Tuyệt đối không thực hiện commit, push, reset hay checkout phá hủy. Giữ nguyên 100% các file đang trong vùng làm việc.
 - **Mã nguồn Frontend (`parking-management-system-frontend`):** Tuyệt đối không commit hay push. Giữ nguyên toàn bộ 8 file tích hợp giao diện.
 - **Kho báo cáo (`thangnx-mc/OJT-report`):** Cam kết và đẩy cập nhật duy nhất tài liệu báo cáo kỹ thuật này lên nhánh `main`.
+
+---
+
+## 10. Báo Cáo Chuẩn Bị Số Dư Ví Thử Nghiệm Cục Bộ (Local Test User Wallet Preparation — aaaa@gmail.com)
+
+- **Ngày thực hiện:** 2026-10-28
+- **Tài khoản mục tiêu:** `aaaa@gmail.com`
+- **Số dư yêu cầu:** **10.000.000 VND**
+- **Trạng thái:** **THÀNH CÔNG (PASS)** — Đã nạp số dư kiểm thử chính xác 10.000.000 VND, ghi nhận sổ cái giao dịch đầy đủ, bảo đảm tính lũy tích (idempotency) và xác minh thành công qua live HTTP API `GET /api/wallet`.
+
+### 10.1. Kiểm Tra An Toàn & Định Danh Tài Khoản (Safety & Account Identity)
+
+1. **CSDL Cục Bộ Được Sử Dụng:**
+   - Server: `(localdb)\mssqllocaldb`
+   - Database: `parking_management_system_nguye` (xác định qua cấu hình `UsePerUserDatabase: true`).
+   - Tuyệt đối không can thiệp vào bất kỳ CSDL production hoặc môi trường từ xa nào.
+2. **Thông Tin Định Danh Tài Khoản:**
+   - **User ID (`Users.UserId`):** `549cd95a-4a7c-4364-a608-5be5c4d0fa27`
+   - **Tên đăng nhập (`UserName`):** `aaaa`
+   - **Email:** `aaaa@gmail.com`
+   - **Vai trò (`Role`):** `User` | **Trạng thái tài khoản (`IsActive`):** `True`
+   - **Khách hàng liên kết (`Customers.Id`):** `1002` (Mã khách hàng: `CUS-5C4EA23A`)
+   - **Mã ví (`Wallets.Id`):** `1`
+   - **Đơn vị tiền tệ (`Currency`):** `VND`
+   - **Trạng thái ví (`Wallets.Status`):** `Active`
+
+### 10.2. Cơ Chế Quản Lý Số Dư & Sổ Cái Giao Dịch Ví (Wallet & Ledger Mechanism)
+
+Theo kiến trúc chuẩn của ứng dụng tại [`PaymentService.cs#L905-930`](file:///C:/DEV/OJT-FSA-Team3/parking-management-system/src/PMS.Application/Services/Impl/PaymentService.cs#L905-L930):
+- Số dư khả dụng của ví được lưu trữ tại trường `Wallets.Balance` (kiểu dữ liệu `decimal(18,2)`).
+- Mỗi biến động số dư (nạp tiền, trừ tiền, cấn trừ cọc đặt chỗ) bắt buộc phải có một bản ghi tương ứng trong bảng `WalletTransactions` với đầy đủ các trường:
+  - `TxnType`: Loại giao dịch (`Deposit` hoặc `Payment` / `Withdraw`).
+  - `Amount`: Giá trị biến động (+/-).
+  - `BalanceBefore`: Số dư trước giao dịch.
+  - `BalanceAfter`: Số dư sau giao dịch.
+  - `ReferenceType` & `ReferenceId`: Loại và mã tham chiếu giao dịch.
+  - `Description`: Diễn giải giao dịch.
+  - `CreatedAt` & `CreatedBy`: Mốc thời gian UTC và ID người thực hiện.
+- **Hiện trạng trước khi nạp:**
+  - `Wallets.Balance`: `20.000,00 VND`
+  - Lịch sử giao dịch hiện hữu (được giữ nguyên toàn vẹn 100%):
+    - `Tx 1`: `Deposit` (+50.000 VND) | `Ref=Payment:PM261027080744ZXJU2M` | `Wallet Top-up (VNPay)`
+    - `Tx 2`: `Payment` (-30.000 VND) | `Ref=Reservation:RSV261027093057LXNBKX` | `Deposit for reservation RSV261027093057LXNBKX`
+
+### 10.3. Phương Pháp Nạp Số Dư Kiểm Thử & Kiểm Soát Trùng Lặp (Idempotent Test Credit)
+
+- **Số tiền cần nạp bổ sung:** `10.000.000 - 20.000 = 9.980.000 VND`.
+- **Thực thi giao dịch an toàn (ACID Transaction):**
+  - Cập nhật số dư bảng `Wallets`: `Balance = 10000000.00`, `UpdatedAt = UTC NOW`.
+  - Ghi nhận sổ cái `WalletTransactions`:
+    - `WalletId`: `1`
+    - `TxnType`: `'Deposit'`
+    - `Amount`: `9980000.00`
+    - `BalanceBefore`: `20000.00`
+    - `BalanceAfter`: `10000000.00`
+    - `ReferenceType`: `'LocalTestCredit'`
+    - `ReferenceId`: `'TEST-CREDIT-10M'`
+    - `Description`: `'Local test credit: Top-up test balance to 10,000,000 VND'`
+    - `CreatedBy`: `'549cd95a-4a7c-4364-a608-5be5c4d0fa27'`
+- **Cơ chế chống nạp trùng (Idempotency):**
+  - Trước khi ghi nhận, script kiểm tra nếu `Balance == 10.000.000 VND` và bản ghi tham chiếu `'TEST-CREDIT-10M'` đã tồn tại trong `WalletTransactions`, hệ thống sẽ trả về kết quả `ALREADY_APPLIED` và bỏ qua, bảo đảm an toàn khi chạy lại nhiều lần.
+
+### 10.4. Bằng Chứng Xác Minh Đa Tầng (Verification Evidence)
+
+#### 1. Kiểm tra trực tiếp trên CSDL (Database Ledger):
+```text
+VERIFIED_WALLET_ID=1
+VERIFIED_BALANCE=10000000.00
+VERIFIED_CURRENCY=VND
+VERIFIED_STATUS=Active
+VERIFIED_UPDATED_AT=10/28/2026 03:23:32
+
+--- ALL TRANSACTIONS FOR WALLET 1 ---
+Tx 1: [Deposit] Amount=50000.00 (Before=0.00 -> After=50000.00) Ref=Payment:PM261027080744ZXJU2M Desc='Wallet Top-up (VNPay)'
+Tx 2: [Payment] Amount=-30000.00 (Before=50000.00 -> After=20000.00) Ref=Reservation:RSV261027093057LXNBKX Desc='Deposit for reservation RSV261027093057LXNBKX'
+Tx 3: [Deposit] Amount=9980000.00 (Before=20000.00 -> After=10000000.00) Ref=LocalTestCredit:TEST-CREDIT-10M Desc='Local test credit: Top-up test balance to 10,000,000 VND'
+```
+
+#### 2. Kiểm tra qua Live API Backend (`GET https://localhost:44391/api/wallet`):
+```text
+[API VERIFY] HTTP Status: 200, Succeeded: true
+[API VERIFY] Balance: 10000000 VND, Status: Active
+[API VERIFY] Recent Transactions Count: 3
+[API VERIFY] Latest Tx: TEST-CREDIT-10M | Amount: 9980000 | Title: Local test credit: Top-up test balance to 10,000,000 VND
+[PASS] API balance matches expected 10000000 VND!
+```
+
+#### 3. Kiểm tra tính lũy tích (Idempotency Re-run Check):
+```text
+OUTCOME=ALREADY_APPLIED
+BALANCE_BEFORE=10000000.00
+BALANCE_AFTER=10000000.00
+CREDIT_AMOUNT=0
+```
+
+### 10.5. Xác Nhận An Toàn & Bảo Mật
+
+- **Bảo toàn dữ liệu:** Không xóa bất kỳ giao dịch ví hiện hữu nào của người dùng. Không thay đổi cấu trúc schema CSDL hay logic nghiệp vụ của ứng dụng.
+- **Bảo mật:** Không để lộ mật khẩu, khóa bí mật JWT hay chuỗi kết nối trong báo cáo và nhật ký.
+- **Ranh giới Git:** Toàn bộ mã nguồn Backend và Frontend được giữ nguyên không commit/push. Chỉ cập nhật và đẩy tài liệu báo cáo kỹ thuật này lên kho `thangnx-mc/OJT-report`.
