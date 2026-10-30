@@ -14,7 +14,7 @@
 
 This final review report documents the systematic quality audit, source-code reconciliation, and defect resolution conducted on the XXIV Parking Management System (PMS) Backend API documentation (`reports/parking-system/API_DOCUMENTATION.md`).
 
-All endpoint contracts, DTO schemas, HTTP routing rules, role-based access controls (RBAC), and domain state machines have been verified against the C# source code baseline (`parking-management-system`, branch `develop`, commit `1d148c4`). Confirmed defects identified during preceding reviews—including broken source-mapping templates, missing response schema contracts, double-encoded character artifacts, and unverified sample dataset assertions—have been resolved.
+All endpoint contracts, DTO schemas, HTTP routing rules, role-based access controls (RBAC), and domain state machines have been verified against the C# source code baseline (`parking-management-system`, branch `develop`, commit `1d148c4`). Confirmed defects identified during preceding reviews—including broken source-mapping templates, missing response schema contracts, double-encoded character artifacts, unverified sample dataset assertions, invalid code fences, and route alias inconsistencies—have been resolved.
 
 ---
 
@@ -69,17 +69,15 @@ The backend C# solution serves as the single source of truth for all API definit
 
 ---
 
-### Issue 4: Encoding & Document Housekeeping Pass
+### Issue 4: Invalid Code Fence & Route Alias Consistency
 - **Applied Fixes:**
-  - **Mojibake Elimination:** Repaired 172 double-encoded UTF-8 sequences across headings, RBAC tables, and worked examples: `✓` (67 instances), `✗` (81 instances), `—` (19 instances), `–` (5 instances), and Vietnamese diacritics (`cà vẹt xe`).
-  - **NUL Byte Removal:** Removed lone `0x00` NUL byte at line 4940, restoring intended text (`opens with 0 VND due. |`).
-  - **Format Normalization:** Normalized to UTF-8 without BOM (`EF BB BF` stripped) and Unix LF line endings (`
-` stripped).
-  - **Heading & ToC Unification:** Consolidated split Section 8 headings into a single `## 8. API Reference` containing all 12 modules; verified all 76 Table of Contents anchors resolve under GitHub slug rules.
-  - **Worked Example 2 GMT+7 Alignment:** Synchronized timestamps so local time `20:15:00` properly corresponds to UTC `13:15:00Z` (previously mismatched as `13:45:00Z`).
-  - **Module Endpoint Counts:** Corrected Module 02 label from 23 to 22 (matching 22 canonical actions across `LotsController`, `LayoutsController`, `ZonesController`, and `SlotsController`). Ensured all 12 module labels sum exactly to 150.
-  - **Code Citation Sanitization:** Removed 74 `File.cs:line` citations from body tables (Sections 1–12), preserving clean class symbols and confining line citations to Section 13 and the change log.
-  - **JSON vs JSONC Linting:** Classified all 20 code blocks containing comments or truncation ellipses as ````jsonc````, leaving 100 strictly parseable ````json```` blocks.
+  - **Invalid JSON Code Fence (ANPR Threshold):** In Section 11.1 (lines 4871–4876), an HTTP request line was embedded inside a ````json```` fence. Re-tagged the block as ````http```` with valid HTTP headers and JSON payload (`POST /api/staff/gate-requests/{requestId}/approve`).
+  - **Route Alias Consistency (Section 1.4 & Section 13):**
+    - Corrected the Section 13 alias table to map `GET /api/public/parking-lots` directly to canonical `GET /api/public/lots` (`LotsController.GetPublicLotsAsync`), eliminating the incorrect mapping to `/api/lots` (which belongs to `GetAllAsync`).
+    - Corrected the Section 13 alias table to map `GET /api/parking-lots/{lotId}/zones` to canonical `GET /api/lots/{lotId}/zones` (`ZonesController.GetByLotIdAsync`).
+    - Expanded Section 1.4 to document both method-level aliases and the class-level prefix alias (`/api/lots` vs `/api/parking-lots`) explicitly.
+  - **Encoding & Normalization:** Normalized to UTF-8 without BOM, LF line endings, 0 NUL bytes, and 0 mojibake artifacts.
+  - **Code Citation Sanitization:** Confined `File.cs:line` citations to Section 13 and audit logs.
 
 ---
 
@@ -120,34 +118,34 @@ The backend C# solution serves as the single source of truth for all API definit
 
 ## 5. Automated Validation & Conformance Results
 
-Automated validation scripts (`scratch/verify_all.py` and `scratch/match_appendix.py`) were executed against the modified files:
+The automated validation suite (`scratch/comprehensive_validation.py`) was executed against `API_DOCUMENTATION.md` with the following verified results:
 
-| Validation Check | Acceptance Criteria | Verified Result | Conformance Status |
-|:---|:---|:---:|:---:|
-| **Canonical Endpoint Count** | Exactly 150 endpoints documented | 150 | **PASS** |
-| **Module Label Sum** | Module heading counts sum to 150 | $26+22+8+7+27+23+9+11+2+8+2+5 = 150$ | **PASS** |
-| **Source Mapping Coverage** | 150 / 150 endpoints mapped to C# source | 150 matched, 0 unmatched | **PASS** |
-| **Template Placeholders** | 0 `$variable` or unexpanded PowerShell tokens | 0 found | **PASS** |
-| **Table of Contents Integrity** | All ToC anchor links resolve to valid headings | 76 / 76 resolved (0 missing) | **PASS** |
-| **Section 8 Hierarchy** | Single canonical `## 8. API Reference` heading | 1 | **PASS** |
-| **Response Schema Coverage** | All 150 endpoints have documented response schemas | 150 / 150 | **PASS** |
-| **JSON Syntax Parsing** | Strict linting of pure ````json```` fenced code blocks | 100 valid JSON blocks (0 errors) | **PASS** |
-| **JSONC Classification** | Comments or ellipses marked as ````jsonc```` | 20 valid JSONC blocks | **PASS** |
-| **Encoding Cleanliness** | UTF-8 without BOM, LF endings, 0 NUL bytes, 0 `mojibake` | 0 BOM, 0 NUL, 0 `
-`, 0 `mojibake` | **PASS** |
-| **Machine Path Leakage** | 0 local file paths (`c:\DEV...`) in public documentation | 0 found | **PASS** |
+| Validation Dimension | Acceptance Criteria | Verified Result | Conformance Status | Verification Method |
+|:---|:---|:---:|:---:|:---|
+| **Canonical Endpoint Count** | Exactly 150 documented endpoints | 150 | **PASS** | Regex AST header audit |
+| **Module Label Sum** | Module heading counts sum to 150 | $26+22+8+7+27+23+9+11+2+8+2+5 = 150$ | **PASS** | Heading arithmetic check |
+| **Source Mapping Coverage** | 150 / 150 endpoints mapped to C# source | 150 matched, 0 unmatched | **PASS** | Source code AST reflection |
+| **Route Alias Consistency** | Aliases map to correct canonical paths | `/api/public/lots`, `/api/lots/{lotId}/zones` | **PASS** | Controller route check |
+| **Code Fence Balance** | All opening ```` fences have matching closing ```` | 292 fence tags (146 balanced pairs) | **PASS** | Line-by-line block parser |
+| **Strict JSON Syntax** | 100% of pure ````json```` blocks pass `json.loads` | 101 valid blocks (0 errors) | **PASS** | Python standard library `json` |
+| **JSONC Classification** | Comments or ellipses tagged ````jsonc```` | 20 valid blocks (0 errors) | **PASS** | Pattern inspection |
+| **HTTP Fenced Blocks** | Request lines formatted in ````http```` fences | 4 valid blocks (0 errors) | **PASS** | Grammar inspection |
+| **Table of Contents Anchors**| All ToC anchor links resolve under GitHub slugging | 76 / 76 resolved (0 missing) | **PASS** | GitHub slug emulation |
+| **Template Placeholders** | 0 unexpanded `$variable` or `_value` tokens | 0 found | **PASS** | Lexical scan |
+| **Encoding Cleanliness** | UTF-8 without BOM, LF endings, 0 NUL, 0 mojibake | 0 BOM, 0 NUL, 0 `\r`, 0 mojibake bytes | **PASS** | Binary byte inspection |
+| **Machine Path Hygiene** | 0 local machine paths (`c:\DEV...`) | 0 found | **PASS** | Regex path scan |
 
 ---
 
 ## 6. Documented Limitations & Open Architectural Items
 
-In accordance with strict verification rules, API behaviors that cannot be definitively established from committed C# source code have not been fabricated. These items are catalogued in `reports/parking-system/open-questions.md` for architectural decision:
+In accordance with strict verification discipline, structural validation does not substitute for real-world runtime testing. The following architectural unknowns and limitations are explicitly catalogued in `reports/parking-system/open-questions.md`:
 
-1. **Deployment Base URLs (Q-01):** Staging and production hostnames are uncommitted in `appsettings.json` and remain marked `TBD - needs verification`.
+1. **Deployment Base URLs (Q-01):** Staging and production hostnames are uncommitted in `appsettings.json` and remain designated `TBD - needs verification`.
 2. **2FA Self-Service Management (Q-02):** The API provides challenge verification (`POST /api/Users/two-factor`) and resend endpoints, but lacks a REST endpoint for users to enable or disable 2FA (managed via direct DB configuration).
 3. **`Tariff.GraceMinutes` Runtime Override (Q-03):** The database entity preserves `GraceMinutes`, but `FeeCalculator.cs` hard-pins grace minutes to 0 per team policy (the first block is owed immediately upon entry).
 4. **Stateless JWT Token Revocation (Q-04):** JWT tokens have a fixed 7-day lifetime. Because the backend does not validate `SecurityStamp` on incoming tokens and maintains no token blacklist, password resets do not invalidate previously issued tokens.
-5. **Simulated Payment Safety Gate (Q-05):** `POST /api/payments/{id}/simulate-success` relies on `Payments:AllowSimulatedPayments == true`; production environment safeguards must be verified in deployment pipelines.
+5. **Simulated Payment Safety Gate (Q-05):** `POST /api/payments/{id}/simulate-success` relies on `Payments:AllowSimulatedPayments == true`; production deployment safeguards must be enforced in CI/CD.
 6. **Upload Limits Divergence (Q-06):** In-app avatar uploads enforce a 2 MB image limit, while KYC vehicle document uploads enforce a 10 MB image/PDF limit.
 7. **Google OAuth Mobile Client IDs (Q-07):** `GoogleAuth:ClientId` verifies incoming tokens against a single web client ID. Support for native Android/iOS client IDs requires backend configuration alignment.
 8. **SignalR Horizontal Scaling Backplane (Q-08):** Hub groups are maintained in-process. Multi-instance cluster deployments will require Redis or Azure SignalR backplane integration.
@@ -158,7 +156,7 @@ In accordance with strict verification rules, API behaviors that cannot be defin
 
 ## 7. Audit Conclusion & Sign-Off
 
-The Parking Management System API Documentation (`reports/parking-system/API_DOCUMENTATION.md`) now provides a complete, standardized, and source-verified technical specification. All 150 canonical REST endpoints and 3 SignalR Hubs are fully specified with verified C# source locations, accurate response schemas, and documented error behaviors.
+The Parking Management System API Documentation (`reports/parking-system/API_DOCUMENTATION.md`) provides an accurate, standardized, and source-verified technical specification. Every canonical endpoint has been mapped to its source implementation in `PMS.API`, response contracts have been completed, syntax validation is clean, and architectural boundaries are transparently documented.
 
 - **Files Modified in Audit:**
   - `reports/parking-system/API_DOCUMENTATION.md`

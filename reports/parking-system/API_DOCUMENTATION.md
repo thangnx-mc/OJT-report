@@ -107,7 +107,11 @@ The backend is structured according to Clean Architecture / N-Tier principles:
 ### 1.4 API Surface Summary
 - **Total Controllers:** 22 concrete REST controllers inheriting from `ApiController`
 - **Total Canonical HTTP Endpoints:** 150 distinct action operations
-- **Route Aliases:** 2 method-level route aliases + 1 class prefix alias (`/api/lots` and `/api/parking-lots`)
+- **Supported Route Aliases:**
+  - **Method-Level Route Aliases (2):**
+    1. `GET /api/public/parking-lots` $\rightarrow$ Alias for canonical `GET /api/public/lots` (`LotsController.GetPublicLotsAsync`).
+    2. `GET /api/parking-lots/{lotId}/zones` $\rightarrow$ Alias for canonical `GET /api/lots/{lotId}/zones` (`ZonesController.GetByLotIdAsync`).
+  - **Class-Level Route Prefix Alias:** `LotsController` defines `[Route("api/lots")]` alongside `[Route("api/parking-lots")]`. Under ASP.NET Core routing, all endpoints on `LotsController` (such as `GET /api/lots`, `GET /api/lots/{id}`, etc.) can also be accessed using the `/api/parking-lots` prefix.
 - **SignalR Real-Time Hubs:** 3 hubs (`/api/hubs/lots`, `/api/hubs/parking-ops`, `/api/hubs/vehicle-verifications`)
 
 ### 1.5 Environments & Base URLs
@@ -4867,9 +4871,11 @@ sequenceDiagram
 #### ANPR Confidence Threshold Handling (BR-18)
 - Configured threshold: **0.85** (`AnprConfidenceThreshold = 0.85`).
 - If the ANPR edge camera reports a confidence score $< 0.85$, the backend triggers an `OpsAlert` (`"LOW_CONFIDENCE"`) on `ParkingOpsHub`.
-- The barrier remains closed until Staff at the gate terminal inspects the high-definition plate image and submits:
-  ```json
+- The barrier remains closed until Staff at the gate terminal inspects the high-definition plate image and submits an approval request:
+  ```http
   POST /api/staff/gate-requests/{requestId}/approve
+  Content-Type: application/json
+
   {
     "plateConfirmed": true
   }
@@ -5140,11 +5146,13 @@ The following directory maps each of the **150 canonical API endpoints** to its 
 
 ### Secondary Method-Level Route Aliases
 
+The ASP.NET Core routing table configures secondary `[HttpGet]` attributes on two action methods to maintain backwards compatibility:
+
 | HTTP Method | Alias Route | Canonical Route | Controller Class | Action Method Name | Source File Location |
 |:---:|:---|:---|:---|:---|:---|
-| `GET` | `/api/public/parking-lots` | `/api/lots` | `LotsController` | `GetPublicLotsAsync` | `src/PMS.API/Controllers/LotsController.cs` |
-| `GET` | `/api/parking-lots/{lotId}/zones` | `/api/zones?lotId={lotId}` | `ZonesController` | `GetByLotIdAsync` | `src/PMS.API/Controllers/ZonesController.cs` |
+| `GET` | `/api/public/parking-lots` | `/api/public/lots` | `LotsController` | `GetPublicLotsAsync` | `src/PMS.API/Controllers/LotsController.cs` |
+| `GET` | `/api/parking-lots/{lotId}/zones` | `/api/lots/{lotId}/zones` | `ZonesController` | `GetByLotIdAsync` | `src/PMS.API/Controllers/ZonesController.cs` |
 
 > [!NOTE]
-> Class-level route prefix alias: `LotsController` defines `[Route("api/lots")]` alongside `[Route("api/parking-lots")]`. Under ASP.NET Core routing, all endpoints on `LotsController` are accessible using either the canonical `/api/lots` prefix or the `/api/parking-lots` alias.
+> **Class-level route prefix alias:** `LotsController` defines `[Route("api/lots")]` alongside `[Route("api/parking-lots")]`. Under ASP.NET Core routing, all endpoints on `LotsController` (such as `GET /api/lots`, `GET /api/lots/{id}`, etc.) are accessible using either the canonical `/api/lots` prefix or the `/api/parking-lots` alias. Note that `GET /api/public/lots` and `GET /api/public/parking-lots` override class prefix routing with absolute path templates (`/api/public/...`).
 
