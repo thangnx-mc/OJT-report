@@ -52,7 +52,7 @@
 ## 1. API Overview
 
 ### 1.1 Purpose and Scope
-The **Parking Management System (PMS)** backend API provides a comprehensive programmatic interface for managing physical parking facilities, automated barrier gates, vehicle recognition, online reservations, digital customer wallets, payment gateway integrations, vehicle paper verifications, dynamic pricing, and financial revenue reporting.
+The **Parking Management System (PMS)** backend API provides a programmatic interface for managing physical parking facilities, automated barrier gates, vehicle recognition, online reservations, digital customer wallets, payment gateway integrations, vehicle paper verifications, dynamic pricing, and financial revenue reporting.
 
 ### 1.2 Base URLs and Environments
 The API runs over HTTPS and uses the base path `/api`. The default development configurations defined in `src/PMS.API/Properties/launchSettings.json` and `src/config/env.ts` are:
@@ -92,7 +92,7 @@ All standard endpoints wrap responses in the generic `ApiResult<T>` envelope.
 ```json
 {
   "succeeded": true,
-  "result": { ... },
+  "result": {},
   "errors": []
 }
 ```
@@ -119,7 +119,7 @@ Paginated responses return `PaginationResponseModel<T>` within `result`:
 {
   "succeeded": true,
   "result": {
-    "items": [ ... ],
+    "items": [],
     "pageNumber": 1,
     "pageSize": 10,
     "totalCount": 85,
@@ -140,9 +140,11 @@ Paginated responses return `PaginationResponseModel<T>` within `result`:
   - `long` (64-bit Integer): Reservations, Parking Sessions, Gate Requests, Payments.
 
 ### 2.6 Non-Standard Response Endpoints
-1. **Binary File Streams:** `GET /api/users/profile/vehicles/{id}/documents/files/{docId}` and `GET /api/vehicle-verifications/{id}/files/{docId}` stream binary data.
-2. **Payment Gateway Callbacks:** `GET /api/payments/vnpay/return` and `GET /api/payments/momo/return` issue HTTP 302 redirects.
-3. **SignalR Connections:** `/api/hubs/*` negotiate WebSocket handshake protocols.
+The following endpoints do not return the standard `ApiResult<T>` JSON envelope:
+1. **Binary File Streams:** `GET /api/users/profile/vehicles/{vehicleId}/documents/files/{documentId}` and `GET /api/vehicle-verifications/{verificationId}/files/{documentId}` return raw binary byte streams via `FileResult` (`image/jpeg`, `image/png`, or `application/pdf`).
+2. **VNPay IPN Acknowledgment:** `GET /api/payments/vnpay/ipn` returns a raw JSON dictionary (`{ "RspCode": "00", "Message": "Confirm Success" }`) per VNPay gateway protocol.
+3. **MoMo IPN Acknowledgment:** `POST /api/payments/momo/ipn` returns HTTP `204 NoContent` with an empty response body per MoMo gateway protocol.
+4. **SignalR Connections:** `/api/hubs/*` negotiate persistent WebSocket duplex protocols.
 
 ---
 
@@ -162,7 +164,7 @@ The system enforces four distinct roles:
 - `User`: End-customer driver.
 - `Staff`: Gate operator executing physical lane operations.
 - `Manager`: Facility supervisor administering assigned parking lots and tariffs.
-- `Admin`: Global administrator.
+- `Admin`: Global system administrator.
 
 | Functional Area | Public / Anonymous | User (Customer) | Staff (Operator) | Manager | Admin |
 | :--- | :---: | :---: | :---: | :---: | :---: |
@@ -172,18 +174,18 @@ The system enforces four distinct roles:
 | **Customer Reservations** | ❌ | ✅ | ❌ | ❌ | ❌ |
 | **Customer Parking Sessions & Payments** | ❌ | ✅ | ❌ | ❌ | ❌ |
 | **Customer Digital Wallet Topup** | ❌ | ✅ | ❌ | ❌ | ❌ |
-| **Gate Check-In & Check-Out Execution** | ❌ | ❌ | ✅ | ❌ | ❌ |
-| **Gate Cash Collection** | ❌ | ❌ | ✅ | ❌ | ❌ |
-| **Lost Ticket Reporting at Gate** | ❌ | ❌ | ✅ | ❌ | ❌ |
-| **Lost Ticket Approval / Rejection** | ❌ | ❌ | ❌ | ✅ (Assigned Lots) | ❌ |
-| **Abnormal Session Forced Closure** | ❌ | ❌ | ❌ | ✅ (Assigned Lots) | ❌ |
-| **Pricing Rule Administration** | ❌ | ❌ | ❌ | ✅ (Assigned Lots) | ❌ |
+| **Gate Check-In & Check-Out Execution** | ❌ | ❌ | ✅ | ✅ | ✅ |
+| **Gate Cash Collection** | ❌ | ❌ | ✅ | ✅ | ✅ |
+| **Lost Ticket Reporting at Gate** | ❌ | ❌ | ✅ | ✅ | ✅ |
+| **Lost Ticket Approval / Rejection** | ❌ | ❌ | ❌ | ✅ (Assigned Lots) | ✅ |
+| **Abnormal Session Forced Closure** | ❌ | ❌ | ❌ | ✅ (Assigned Lots) | ✅ |
+| **Pricing Rule Administration** | ❌ | ❌ | ❌ | ✅ (Assigned Lots) | ✅ |
 | **Staff Account Management** | ❌ | ❌ | ❌ | ✅ (Assigned Lots) | ❌ |
 | **Manager Revenue Reporting** | ❌ | ❌ | ❌ | ✅ (Assigned Lots) | ❌ |
 | **Admin Revenue Reporting (System-wide)**| ❌ | ❌ | ❌ | ❌ | ✅ |
 | **Manager Account CRUD** | ❌ | ❌ | ❌ | ❌ | ✅ |
 | **User Account Status Toggle** | ❌ | ❌ | ❌ | ❌ | ✅ |
-| **Vehicle Paper Review & Approval** | ❌ | ❌ | ✅ | ❌ | ✅ |
+| **Vehicle Paper Review & Approval** | ❌ | ❌ | ✅ | ✅ | ✅ |
 | **Simulation Sandbox Controls** | ❌ | ❌ | ❌ | ❌ | ✅ |
 
 ### 3.3 Two-Factor Authentication (2FA) Challenge Flow
@@ -220,28 +222,26 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
 **Description:** Retrieves all registered customer accounts.
 
 - **Action Method:** `UsersController.GetAllAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Admin`
+- **Authentication:** Bearer JWT Required (Admin)
 - **Query Parameters:**
-  - `role` (string, default: `null`)
-  - `isActive` (bool?, default: `null`)
-  - `searchTerm` (string, default: `null`)
+  - `role` (string, optional, default: `null`)
+  - `isActive` (bool?, optional, default: `null`)
+  - `searchTerm` (string, optional, default: `null`)
 - **Response Contract:** `ApiResult<IEnumerable<UserResponseModel>>`
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Admin) or lacks lot assignment scope.
 
 #### 4.1.2 `GET` /api/Users/{id}
 
 **Description:** Retrieves a single user account by its unique identifier.
 
 - **Action Method:** `UsersController.GetByIdAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Admin`
+- **Authentication:** Bearer JWT Required (Admin)
 - **Path Parameters:**
-  - `id` (string, required)
+  - `id` (string, required): Unique identifier for id.
 - **Response Contract:** `ApiResult<UserResponseModel>`
 - **Success Response Example (`200 OK`):**
   ```json
@@ -261,20 +261,18 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Admin) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.1.3 `POST` /api/Users/internal
 
 **Description:** Provisions an internal staff or manager user account.
 
 - **Action Method:** `UsersController.CreateInternalUserAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Admin`
+- **Authentication:** Bearer JWT Required (Admin)
 - **Request Body (`CreateInternalUserModel`):**
   ```json
   {
@@ -298,21 +296,20 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Admin) or lacks lot assignment scope.
 
 #### 4.1.4 `PATCH` /api/Users/{id}/status
 
 **Description:** Activates or deactivates an internal user account.
 
 - **Action Method:** `UsersController.UpdateStatusAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Admin`
+- **Authentication:** Bearer JWT Required (Admin)
 - **Path Parameters:**
-  - `id` (string, required)
+  - `id` (string, required): Unique identifier for id.
 - **Request Body (`UpdateUserStatusModel`):**
   ```json
   {
@@ -320,12 +317,12 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
   }
   ```
 - **Response Contract:** `ApiResult<bool>`
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Admin) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.1.5 `POST` /api/Users/register
 
@@ -344,9 +341,9 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
 
 #### 4.1.6 `POST` /api/Users/authenticate
 
@@ -375,9 +372,9 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
 
 #### 4.1.7 `POST` /api/Users/two-factor
 
@@ -415,9 +412,9 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
 
 #### 4.1.8 `POST` /api/Users/two-factor/resend
 
@@ -446,9 +443,9 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
 
 #### 4.1.9 `POST` /api/Users/login-otp/request
 
@@ -457,9 +454,9 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
 - **Action Method:** `UsersController.RequestLoginOtpAsync`
 - **Authentication:** None (Public)
 - **Response Contract:** `ApiResult<string>`
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
 
 #### 4.1.10 `POST` /api/Users/login-otp/verify
 
@@ -488,9 +485,9 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
 
 #### 4.1.11 `POST` /api/Users/forgot-password
 
@@ -505,9 +502,10 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
   }
   ```
 - **Response Contract:** `ApiResult<string>`
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `429 Too Many Requests`: Exceeded password reset rate limit (max 5 requests per 15 minutes per IP).
 
 #### 4.1.12 `POST` /api/Users/reset-password
 
@@ -525,9 +523,9 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
   }
   ```
 - **Response Contract:** `ApiResult<string>`
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
 
 #### 4.1.13 `POST` /api/Users/login-google
 
@@ -556,17 +554,16 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
 
 #### 4.1.14 `GET` /api/Users/profile
 
 **Description:** Retrieves the authenticated user profile information.
 
 - **Action Method:** `UsersController.GetProfileAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Authenticated`
+- **Authentication:** Bearer JWT Required (Authenticated)
 - **Response Contract:** `ApiResult<UserProfileResponseModel>`
 - **Success Response Example (`200 OK`):**
   ```json
@@ -608,19 +605,16 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
 
 #### 4.1.15 `PUT` /api/Users/profile
 
 **Description:** Updates the authenticated user personal profile information.
 
 - **Action Method:** `UsersController.UpdateProfileAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Authenticated`
+- **Authentication:** Bearer JWT Required (Authenticated)
 - **Request Body (`UpdateUserProfileModel`):**
   ```json
   {
@@ -672,22 +666,20 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
 
 #### 4.1.16 `GET` /api/Users/profile/check-unique
 
 **Description:** Executes CheckProfileUniquenessAsync operation.
 
 - **Action Method:** `UsersController.CheckProfileUniquenessAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Authenticated`
+- **Authentication:** Bearer JWT Required (Authenticated)
 - **Query Parameters:**
-  - `phone` (string?, default: `null`)
-  - `citizenId` (string?, default: `null`)
+  - `phone` (string?, optional, default: `null`)
+  - `citizenId` (string?, optional, default: `null`)
 - **Response Contract:** `ApiResult<ProfileFieldAvailabilityModel>`
 - **Success Response Example (`200 OK`):**
   ```json
@@ -702,19 +694,17 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
 
 #### 4.1.17 `POST` /api/Users/profile/avatar
 
 **Description:** Uploads a new profile picture for the authenticated user.
 
 - **Action Method:** `UsersController.UploadAvatarAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Authenticated`
+- **Authentication:** Bearer JWT Required (Authenticated)
 - **Response Contract:** `ApiResult<UserProfileResponseModel>`
 - **Success Response Example (`200 OK`):**
   ```json
@@ -756,36 +746,31 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
 
 #### 4.1.18 `GET` /api/Users/profile/vehicles
 
 **Description:** Retrieves all registered vehicles associated with the authenticated customer.
 
 - **Action Method:** `UsersController.GetVehiclesAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Authenticated`
+- **Authentication:** Bearer JWT Required (Authenticated)
 - **Response Contract:** `ApiResult<List<VehicleResponseModel>>`
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
 
 #### 4.1.19 `GET` /api/Users/profile/vehicles/check-plate
 
 **Description:** Executes CheckPlateAvailabilityAsync operation.
 
 - **Action Method:** `UsersController.CheckPlateAvailabilityAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Authenticated`
+- **Authentication:** Bearer JWT Required (Authenticated)
 - **Query Parameters:**
-  - `plate` (string, default: `none`)
-  - `excludeVehicleId` (Guid?, default: `null`)
+  - `plate` (string, optional, default: `none`)
+  - `excludeVehicleId` (Guid?, optional, default: `null`)
 - **Response Contract:** `ApiResult<PlateAvailabilityResponseModel>`
 - **Success Response Example (`200 OK`):**
   ```json
@@ -799,19 +784,17 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
 
 #### 4.1.20 `POST` /api/Users/profile/vehicles
 
 **Description:** Registers a new vehicle under the authenticated customer profile.
 
 - **Action Method:** `UsersController.AddVehicleAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Authenticated`
+- **Authentication:** Bearer JWT Required (Authenticated)
 - **Request Body (`CreateVehicleModel`):**
   ```json
   {
@@ -848,21 +831,19 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
 
 #### 4.1.21 `PUT` /api/Users/profile/vehicles/{vehicleId:guid}
 
 **Description:** Updates details of an existing registered vehicle.
 
 - **Action Method:** `UsersController.UpdateVehicleAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Authenticated`
+- **Authentication:** Bearer JWT Required (Authenticated)
 - **Path Parameters:**
-  - `vehicleId` (guid, required)
+  - `vehicleId` (guid, required): Unique identifier for vehicleId.
 - **Request Body (`UpdateVehicleModel`):**
   ```json
   {
@@ -900,39 +881,34 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.1.22 `DELETE` /api/Users/profile/vehicles/{vehicleId:guid}
 
 **Description:** Removes or deactivates a registered vehicle from the customer profile.
 
 - **Action Method:** `UsersController.DeleteVehicleAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Authenticated`
+- **Authentication:** Bearer JWT Required (Authenticated)
 - **Path Parameters:**
-  - `vehicleId` (guid, required)
+  - `vehicleId` (guid, required): Unique identifier for vehicleId.
 - **Response Contract:** `ApiResult<bool>`
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.1.23 `PATCH` /api/Users/profile/vehicles/{vehicleId:guid}/default
 
 **Description:** Sets a registered vehicle as the customer default vehicle.
 
 - **Action Method:** `UsersController.SetDefaultVehicleAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Authenticated`
+- **Authentication:** Bearer JWT Required (Authenticated)
 - **Path Parameters:**
-  - `vehicleId` (guid, required)
+  - `vehicleId` (guid, required): Unique identifier for vehicleId.
 - **Response Contract:** `ApiResult<VehicleResponseModel>`
 - **Success Response Example (`200 OK`):**
   ```json
@@ -957,34 +933,29 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.1.24 `GET` /api/Users/profile/vehicle-types
 
 **Description:** Retrieves active vehicle categories supported by the parking system.
 
 - **Action Method:** `UsersController.GetVehicleTypesAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Authenticated`
+- **Authentication:** Bearer JWT Required (Authenticated)
 - **Response Contract:** `ApiResult<List<VehicleTypeResponseModel>>`
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
 
 #### 4.1.25 `PUT` /api/Users/profile/change-password
 
 **Description:** Changes the account password for the authenticated user.
 
 - **Action Method:** `UsersController.ChangePasswordAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Authenticated`
+- **Authentication:** Bearer JWT Required (Authenticated)
 - **Request Body (`ChangePasswordModel`):**
   ```json
   {
@@ -994,21 +965,19 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
   }
   ```
 - **Response Contract:** `ApiResult<bool>`
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
 
 #### 4.1.26 `GET` /api/Users/{id}/profile
 
 **Description:** Executes GetProfileByUserIdAsync operation.
 
 - **Action Method:** `UsersController.GetProfileByUserIdAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Admin`
+- **Authentication:** Bearer JWT Required (Admin)
 - **Path Parameters:**
-  - `id` (string, required)
+  - `id` (string, required): Unique identifier for id.
 - **Response Contract:** `ApiResult<UserProfileResponseModel>`
 - **Success Response Example (`200 OK`):**
   ```json
@@ -1050,12 +1019,11 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Admin) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 ---
 
@@ -1068,9 +1036,8 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
 - **Action Method:** `LayoutsController.GetTemplates`
 - **Authentication:** None (Public)
 - **Response Contract:** `ApiResult<IReadOnlyList<LotTemplateResponseModel>>`
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
 
 #### 4.2.2 `GET` /api/public/lots/{lotId:int}/layout
 
@@ -1079,7 +1046,7 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
 - **Action Method:** `LayoutsController.GetPublishedAsync`
 - **Authentication:** None (Public)
 - **Path Parameters:**
-  - `lotId` (int, required)
+  - `lotId` (int, required): Unique identifier for lotId.
 - **Response Contract:** `ApiResult<LayoutResponseModel>`
 - **Success Response Example (`200 OK`):**
   ```json
@@ -1128,10 +1095,10 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
+  - `429 Too Many Requests`: Exceeded public visual layout rate limit (max 120 requests per minute per IP).
 
 #### 4.2.3 `GET` /api/public/lots/{lotId:int}/layout/status
 
@@ -1140,7 +1107,7 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
 - **Action Method:** `LayoutsController.GetStatusAsync`
 - **Authentication:** None (Public)
 - **Path Parameters:**
-  - `lotId` (int, required)
+  - `lotId` (int, required): Unique identifier for lotId.
 - **Response Contract:** `ApiResult<LayoutStatusResponseModel>`
 - **Success Response Example (`200 OK`):**
   ```json
@@ -1167,10 +1134,9 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.2.4 `GET` /api/public/lots/{lotId:int}/layout/2d
 
@@ -1179,9 +1145,9 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
 - **Action Method:** `LayoutsController.Get2DAsync`
 - **Authentication:** None (Public)
 - **Path Parameters:**
-  - `lotId` (int, required)
+  - `lotId` (int, required): Unique identifier for lotId.
 - **Query Parameters:**
-  - `detail` (string, default: `LayoutDetail.Slots`)
+  - `detail` (string, optional, default: `LayoutDetail.Slots`)
 - **Response Contract:** `ApiResult<Layout2DResponseModel>`
 - **Success Response Example (`200 OK`):**
   ```json
@@ -1210,28 +1176,27 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.2.5 `GET` /api/lots
 
-**Description:** Retrieves all registered customer accounts.
+**Description:** Retrieves the list of active parking lots with capacity and status.
 
 - **Action Method:** `LotsController.GetAllAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Admin,Manager`
+- **Authentication:** Bearer JWT Required (Admin,Manager)
 - **Query Parameters:**
-  - `searchTerm` (string, default: `null`)
-  - `status` (string, default: `null`)
-  - `includeDeleted` (bool, default: `false`)
+  - `searchTerm` (string, optional, default: `null`)
+  - `status` (string, optional, default: `null`)
+  - `includeDeleted` (bool, optional, default: `false`)
 - **Response Contract:** `ApiResult<IEnumerable<ParkingLotResponseModel>>`
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Admin,Manager) or lacks lot assignment scope.
 
 #### 4.2.6 `GET` /api/public/lots
 
@@ -1240,11 +1205,11 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
 - **Action Method:** `LotsController.GetPublicLotsAsync`
 - **Authentication:** None (Public)
 - **Query Parameters:**
-  - `searchTerm` (string, default: `null`)
+  - `searchTerm` (string, optional, default: `null`)
 - **Response Contract:** `ApiResult<IEnumerable<PublicParkingLotResponseModel>>`
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
 
 #### 4.2.7 `GET` /api/public/lots/{id:int}/prices
 
@@ -1253,22 +1218,20 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
 - **Action Method:** `LotsController.GetPublicPricesAsync`
 - **Authentication:** None (Public)
 - **Path Parameters:**
-  - `id` (int, required)
+  - `id` (int, required): Unique identifier for id.
 - **Response Contract:** `ApiResult<IReadOnlyList<PublicLotPriceModel>>`
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.2.8 `GET` /api/lots/{id:int}
 
-**Description:** Retrieves a single user account by its unique identifier.
+**Description:** Retrieves detailed configuration and metrics for a specific parking lot.
 
 - **Action Method:** `LotsController.GetByIdAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Admin,Manager`
+- **Authentication:** Bearer JWT Required (Admin,Manager)
 - **Path Parameters:**
-  - `id` (int, required)
+  - `id` (int, required): Unique identifier for id.
 - **Response Contract:** `ApiResult<ParkingLotResponseModel>`
 - **Success Response Example (`200 OK`):**
   ```json
@@ -1310,20 +1273,18 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Admin,Manager) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.2.9 `POST` /api/lots
 
 **Description:** Creates a new parking lot facility.
 
 - **Action Method:** `LotsController.CreateAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Admin`
+- **Authentication:** Bearer JWT Required (Admin)
 - **Request Body (`CreateParkingLotModel`):**
   ```json
   {
@@ -1384,21 +1345,20 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Admin) or lacks lot assignment scope.
 
 #### 4.2.10 `PUT` /api/lots/{id:int}
 
 **Description:** Updates configuration settings of an existing parking lot.
 
 - **Action Method:** `LotsController.UpdateAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Admin`
+- **Authentication:** Bearer JWT Required (Admin)
 - **Path Parameters:**
-  - `id` (int, required)
+  - `id` (int, required): Unique identifier for id.
 - **Request Body (`UpdateParkingLotModel`):**
   ```json
   {
@@ -1457,22 +1417,21 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Admin) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.2.11 `PUT` /api/lots/{id:int}/template
 
 **Description:** Applies a predefined grid template to generate zones and slots for a lot.
 
 - **Action Method:** `LotsController.ApplyTemplateAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Admin`
+- **Authentication:** Bearer JWT Required (Admin)
 - **Path Parameters:**
-  - `id` (int, required)
+  - `id` (int, required): Unique identifier for id.
 - **Request Body (`ApplyLotTemplateModel`):**
   ```json
   {
@@ -1520,22 +1479,21 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Admin) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.2.12 `PATCH` /api/lots/{id:int}/status
 
-**Description:** Activates or deactivates an internal user account.
+**Description:** Updates the operational status of a parking lot (e.g. Open, Closed, Maintenance).
 
 - **Action Method:** `LotsController.UpdateStatusAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Admin,Manager`
+- **Authentication:** Bearer JWT Required (Admin,Manager)
 - **Path Parameters:**
-  - `id` (int, required)
+  - `id` (int, required): Unique identifier for id.
 - **Request Body (`UpdateParkingLotStatusModel`):**
   ```json
   {
@@ -1547,75 +1505,69 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
   }
   ```
 - **Response Contract:** `ApiResult<bool>`
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Admin,Manager) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.2.13 `DELETE` /api/lots/{id:int}
 
 **Description:** Deactivates or removes a parking lot.
 
 - **Action Method:** `LotsController.DeleteAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Admin`
+- **Authentication:** Bearer JWT Required (Admin)
 - **Path Parameters:**
-  - `id` (int, required)
+  - `id` (int, required): Unique identifier for id.
 - **Response Contract:** `ApiResult<bool>`
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Admin) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.2.14 `GET` /api/slots
 
-**Description:** Retrieves all registered customer accounts.
+**Description:** Manages individual parking bay slots, status overrides, and sensor bindings.
 
 - **Action Method:** `SlotsController.GetAllAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Admin,Manager`
+- **Authentication:** Bearer JWT Required (Admin,Manager)
 - **Query Parameters:**
-  - `zoneId` (int?, default: `null`)
-  - `vehicleTypeId` (int?, default: `null`)
-  - `status` (string, default: `null`)
-  - `isActive` (bool?, default: `null`)
+  - `zoneId` (int?, optional, default: `null`)
+  - `vehicleTypeId` (int?, optional, default: `null`)
+  - `status` (string, optional, default: `null`)
+  - `isActive` (bool?, optional, default: `null`)
 - **Response Contract:** `ApiResult<IEnumerable<SlotResponseModel>>`
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Admin,Manager) or lacks lot assignment scope.
 
 #### 4.2.15 `GET` /api/zones/{zoneId:int}/slots
 
 **Description:** Manages individual parking bay slots, status overrides, and sensor bindings.
 
 - **Action Method:** `SlotsController.GetByZoneIdAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Admin,Manager`
+- **Authentication:** Bearer JWT Required (Admin,Manager)
 - **Path Parameters:**
-  - `zoneId` (int, required)
+  - `zoneId` (int, required): Unique identifier for zoneId.
 - **Response Contract:** `ApiResult<IEnumerable<SlotResponseModel>>`
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Admin,Manager) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.2.16 `GET` /api/slots/{id:int}
 
-**Description:** Retrieves a single user account by its unique identifier.
+**Description:** Manages individual parking bay slots, status overrides, and sensor bindings.
 
 - **Action Method:** `SlotsController.GetByIdAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Admin,Manager`
+- **Authentication:** Bearer JWT Required (Admin,Manager)
 - **Path Parameters:**
-  - `id` (int, required)
+  - `id` (int, required): Unique identifier for id.
 - **Response Contract:** `ApiResult<SlotResponseModel>`
 - **Success Response Example (`200 OK`):**
   ```json
@@ -1640,22 +1592,20 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Admin,Manager) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.2.17 `PUT` /api/slots/{id:int}
 
 **Description:** Manages individual parking bay slots, status overrides, and sensor bindings.
 
 - **Action Method:** `SlotsController.UpdateAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Admin`
+- **Authentication:** Bearer JWT Required (Admin)
 - **Path Parameters:**
-  - `id` (int, required)
+  - `id` (int, required): Unique identifier for id.
 - **Request Body (`UpdateSlotModel`):**
   ```json
   {
@@ -1690,22 +1640,21 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Admin) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.2.18 `PATCH` /api/slots/{id:int}/status
 
-**Description:** Activates or deactivates an internal user account.
+**Description:** Manages individual parking bay slots, status overrides, and sensor bindings.
 
 - **Action Method:** `SlotsController.UpdateStatusAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Admin,Manager`
+- **Authentication:** Bearer JWT Required (Admin,Manager)
 - **Path Parameters:**
-  - `id` (int, required)
+  - `id` (int, required): Unique identifier for id.
 - **Request Body (`UpdateSlotStatusModel`):**
   ```json
   {
@@ -1713,55 +1662,51 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
   }
   ```
 - **Response Contract:** `ApiResult<bool>`
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Admin,Manager) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.2.19 `GET` /api/zones
 
-**Description:** Retrieves all registered customer accounts.
+**Description:** Manages zone configurations within parking lot levels.
 
 - **Action Method:** `ZonesController.GetAllAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Admin,Manager`
+- **Authentication:** Bearer JWT Required (Admin,Manager)
 - **Query Parameters:**
-  - `lotId` (int?, default: `null`)
+  - `lotId` (int?, optional, default: `null`)
 - **Response Contract:** `ApiResult<IEnumerable<ZoneResponseModel>>`
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Admin,Manager) or lacks lot assignment scope.
 
 #### 4.2.20 `GET` /api/lots/{lotId:int}/zones
 
 **Description:** Manages zone configurations within parking lot levels.
 
 - **Action Method:** `ZonesController.GetByLotIdAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Admin,Manager`
+- **Authentication:** Bearer JWT Required (Admin,Manager)
 - **Path Parameters:**
-  - `lotId` (int, required)
+  - `lotId` (int, required): Unique identifier for lotId.
 - **Response Contract:** `ApiResult<IEnumerable<ZoneResponseModel>>`
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Admin,Manager) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.2.21 `GET` /api/zones/{id:int}
 
-**Description:** Retrieves a single user account by its unique identifier.
+**Description:** Manages zone configurations within parking lot levels.
 
 - **Action Method:** `ZonesController.GetByIdAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Admin,Manager`
+- **Authentication:** Bearer JWT Required (Admin,Manager)
 - **Path Parameters:**
-  - `id` (int, required)
+  - `id` (int, required): Unique identifier for id.
 - **Response Contract:** `ApiResult<ZoneResponseModel>`
 - **Success Response Example (`200 OK`):**
   ```json
@@ -1787,22 +1732,20 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Admin,Manager) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.2.22 `PUT` /api/zones/{id:int}
 
 **Description:** Manages zone configurations within parking lot levels.
 
 - **Action Method:** `ZonesController.UpdateAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Admin`
+- **Authentication:** Bearer JWT Required (Admin)
 - **Path Parameters:**
-  - `id` (int, required)
+  - `id` (int, required): Unique identifier for id.
 - **Request Body (`UpdateZoneModel`):**
   ```json
   {
@@ -1840,12 +1783,12 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Admin) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 ---
 
@@ -1853,11 +1796,10 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
 
 #### 4.3.1 `POST` /api/reservations
 
-**Description:** Executes CreateAsync operation.
+**Description:** Books an advance parking reservation at a specified lot and slot.
 
 - **Action Method:** `ReservationsController.CreateAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: User`
+- **Authentication:** Bearer JWT Required (User)
 - **Request Body (`CreateReservationModel`):**
   ```json
   {
@@ -1871,7 +1813,7 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
   }
   ```
 - **Response Contract:** `ApiResult<ReservationResponseModel>`
-- **Success Response Example (`200 OK`):**
+- **Success Response Example (`201 Created`):**
   ```json
   {
     "succeeded": true,
@@ -1935,35 +1877,34 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
+- **Applicable HTTP Status Codes:**
+  - `201 Created`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (User) or lacks lot assignment scope.
+  - `409 Conflict`: Slot bay has an overlapping advance reservation.
 
 #### 4.3.2 `GET` /api/reservations/mine
 
-**Description:** Retrieves parking session history for the authenticated customer.
+**Description:** Retrieves active and historical reservations for the authenticated customer.
 
 - **Action Method:** `ReservationsController.GetMineAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: User`
+- **Authentication:** Bearer JWT Required (User)
 - **Query Parameters:**
-  - `activeOnly` (bool, default: `false`)
+  - `activeOnly` (bool, optional, default: `false`)
 - **Response Contract:** `ApiResult<IReadOnlyList<ReservationResponseModel>>`
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (User) or lacks lot assignment scope.
 
 #### 4.3.3 `GET` /api/reservations/upcoming
 
 **Description:** Retrieves the next upcoming active reservation for the authenticated customer.
 
 - **Action Method:** `ReservationsController.GetUpcomingAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: User`
+- **Authentication:** Bearer JWT Required (User)
 - **Response Contract:** `ApiResult<ReservationResponseModel>`
 - **Success Response Example (`200 OK`):**
   ```json
@@ -2029,21 +1970,19 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (User) or lacks lot assignment scope.
 
 #### 4.3.4 `GET` /api/reservations/{id:long}
 
-**Description:** Executes GetAsync operation.
+**Description:** Retrieves detailed information for a specific reservation.
 
 - **Action Method:** `ReservationsController.GetAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: User`
+- **Authentication:** Bearer JWT Required (User)
 - **Path Parameters:**
-  - `id` (long, required)
+  - `id` (long, required): Unique identifier for id.
 - **Response Contract:** `ApiResult<ReservationResponseModel>`
 - **Success Response Example (`200 OK`):**
   ```json
@@ -2109,22 +2048,20 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (User) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.3.5 `PUT` /api/reservations/{id:long}
 
-**Description:** Executes UpdateAsync operation.
+**Description:** Modifies an existing advance reservation before the arrival window.
 
 - **Action Method:** `ReservationsController.UpdateAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: User`
+- **Authentication:** Bearer JWT Required (User)
 - **Path Parameters:**
-  - `id` (long, required)
+  - `id` (long, required): Unique identifier for id.
 - **Request Body (`UpdateReservationModel`):**
   ```json
   {
@@ -2199,22 +2136,21 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (User) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.3.6 `POST` /api/reservations/{id:long}/cancel
 
-**Description:** Executes CancelAsync operation.
+**Description:** Cancels an advance reservation and releases the reserved slot.
 
 - **Action Method:** `ReservationsController.CancelAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: User`
+- **Authentication:** Bearer JWT Required (User)
 - **Path Parameters:**
-  - `id` (long, required)
+  - `id` (long, required): Unique identifier for id.
 - **Request Body (`CancelReservationModel`):**
   ```json
   {
@@ -2286,22 +2222,21 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (User) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.3.7 `GET` /api/reservations/{id:long}/qr
 
 **Description:** Generates the entry QR code credential for a confirmed reservation.
 
 - **Action Method:** `ReservationsController.GetQrAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: User`
+- **Authentication:** Bearer JWT Required (User)
 - **Path Parameters:**
-  - `id` (long, required)
+  - `id` (long, required): Unique identifier for id.
 - **Response Contract:** `ApiResult<ReservationQrModel>`
 - **Success Response Example (`200 OK`):**
   ```json
@@ -2317,22 +2252,20 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (User) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.3.8 `POST` /api/reservations/{id:long}/payments
 
-**Description:** Executes PayDepositAsync operation.
+**Description:** Processes the reservation deposit payment via customer wallet or gateway.
 
 - **Action Method:** `ReservationsController.PayDepositAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: User`
+- **Authentication:** Bearer JWT Required (User)
 - **Path Parameters:**
-  - `id` (long, required)
+  - `id` (long, required): Unique identifier for id.
 - **Request Body (`CreatePaymentModel`):**
   ```json
   {
@@ -2370,12 +2303,12 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (User) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 ---
 
@@ -2386,40 +2319,36 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
 **Description:** Retrieves parking session history for the authenticated customer.
 
 - **Action Method:** `ParkingSessionsController.GetMineAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: User`
+- **Authentication:** Bearer JWT Required (User)
 - **Response Contract:** `ApiResult<IReadOnlyList<SessionResponseModel>>`
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (User) or lacks lot assignment scope.
 
 #### 4.4.2 `GET` /api/parking-sessions/history
 
 **Description:** Retrieves paginated historical parking sessions for the authenticated customer.
 
 - **Action Method:** `ParkingSessionsController.GetHistoryAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: User`
+- **Authentication:** Bearer JWT Required (User)
 - **Query Parameters:**
-  - `query` (ParkingHistoryQuery, default: `none`)
+  - `query` (ParkingHistoryQuery, optional, default: `none`)
 - **Response Contract:** `ApiResult<IReadOnlyList<SessionResponseModel>>`
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (User) or lacks lot assignment scope.
 
 #### 4.4.3 `GET` /api/parking-sessions/{id:long}/receipt
 
 **Description:** Retrieves payment receipt and session billing breakdown.
 
 - **Action Method:** `ParkingSessionsController.GetReceiptAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: User`
+- **Authentication:** Bearer JWT Required (User)
 - **Path Parameters:**
-  - `id` (long, required)
+  - `id` (long, required): Unique identifier for id.
 - **Response Contract:** `ApiResult<ParkingReceiptModel>`
 - **Success Response Example (`200 OK`):**
   ```json
@@ -2446,20 +2375,18 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (User) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.4.4 `GET` /api/parking-sessions/current
 
 **Description:** Retrieves active in-progress parking session for the authenticated customer.
 
 - **Action Method:** `ParkingSessionsController.GetCurrentAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: User`
+- **Authentication:** Bearer JWT Required (User)
 - **Response Contract:** `ApiResult<ParkingReceiptModel>`
 - **Success Response Example (`200 OK`):**
   ```json
@@ -2486,21 +2413,19 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (User) or lacks lot assignment scope.
 
 #### 4.4.5 `GET` /api/parking-sessions/{id:long}/exit-pass
 
-**Description:** Generates an exit pass QR code for a settled parking session.
+**Description:** Generates an exit pass signed token for a settled parking session.
 
 - **Action Method:** `ParkingSessionsController.GetExitPassAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: User`
+- **Authentication:** Bearer JWT Required (User)
 - **Path Parameters:**
-  - `id` (long, required)
+  - `id` (long, required): Unique identifier for id.
 - **Response Contract:** `ApiResult<ExitPassModel>`
 - **Success Response Example (`200 OK`):**
   ```json
@@ -2517,22 +2442,20 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (User) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.4.6 `GET` /api/parking-sessions/{id:long}/quote
 
 **Description:** Calculates the real-time parking fee quote for an active customer session.
 
 - **Action Method:** `ParkingSessionsController.QuoteAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: User`
+- **Authentication:** Bearer JWT Required (User)
 - **Path Parameters:**
-  - `id` (long, required)
+  - `id` (long, required): Unique identifier for id.
 - **Response Contract:** `ApiResult<CheckoutQuoteModel>`
 - **Success Response Example (`200 OK`):**
   ```json
@@ -2610,22 +2533,20 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (User) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.4.7 `POST` /api/parking-sessions/{id:long}/payments
 
-**Description:** Executes PayAsync operation.
+**Description:** Initiates online settlement of parking fees via digital wallet or gateway.
 
 - **Action Method:** `ParkingSessionsController.PayAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: User`
+- **Authentication:** Bearer JWT Required (User)
 - **Path Parameters:**
-  - `id` (long, required)
+  - `id` (long, required): Unique identifier for id.
 - **Request Body (`CreatePaymentModel`):**
   ```json
   {
@@ -2663,12 +2584,12 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (User) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 ---
 
@@ -2679,10 +2600,9 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
 **Description:** Handles manual gate-open assistance requests from drivers and operator approvals.
 
 - **Action Method:** `GateRequestsController.RequestCheckInAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: User`
+- **Authentication:** Bearer JWT Required (User)
 - **Path Parameters:**
-  - `reservationId` (long, required)
+  - `reservationId` (long, required): Unique identifier for reservationId.
 - **Response Contract:** `ApiResult<GateRequestModel>`
 - **Success Response Example (`200 OK`):**
   ```json
@@ -2722,22 +2642,22 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (User) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
+  - `409 Conflict`: Slot or capacity conflict when override flags are omitted.
 
 #### 4.5.2 `POST` /api/parking-sessions/{sessionId:long}/check-out-request
 
 **Description:** Handles manual gate-open assistance requests from drivers and operator approvals.
 
 - **Action Method:** `GateRequestsController.RequestCheckOutAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: User`
+- **Authentication:** Bearer JWT Required (User)
 - **Path Parameters:**
-  - `sessionId` (long, required)
+  - `sessionId` (long, required): Unique identifier for sessionId.
 - **Response Contract:** `ApiResult<GateRequestModel>`
 - **Success Response Example (`200 OK`):**
   ```json
@@ -2777,20 +2697,19 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (User) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.5.3 `GET` /api/gate-requests/mine
 
-**Description:** Retrieves parking session history for the authenticated customer.
+**Description:** Handles manual gate-open assistance requests from drivers and operator approvals.
 
 - **Action Method:** `GateRequestsController.GetMineAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: User`
+- **Authentication:** Bearer JWT Required (User)
 - **Response Contract:** `ApiResult<GateRequestModel>`
 - **Success Response Example (`200 OK`):**
   ```json
@@ -2830,21 +2749,19 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (User) or lacks lot assignment scope.
 
 #### 4.5.4 `POST` /api/gate-requests/{requestId:long}/cancel
 
 **Description:** Handles manual gate-open assistance requests from drivers and operator approvals.
 
 - **Action Method:** `GateRequestsController.CancelAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: User`
+- **Authentication:** Bearer JWT Required (User)
 - **Path Parameters:**
-  - `requestId` (long, required)
+  - `requestId` (long, required): Unique identifier for requestId.
 - **Response Contract:** `ApiResult<GateRequestModel>`
 - **Success Response Example (`200 OK`):**
   ```json
@@ -2884,41 +2801,39 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (User) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.5.5 `GET` /api/staff/lots/{lotId:int}/gate-requests
 
 **Description:** Handles manual gate-open assistance requests from drivers and operator approvals.
 
 - **Action Method:** `GateRequestsController.GetQueueAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Staff,Manager,Admin`
+- **Authentication:** Bearer JWT Required (Staff,Manager,Admin)
 - **Path Parameters:**
-  - `lotId` (int, required)
+  - `lotId` (int, required): Unique identifier for lotId.
 - **Query Parameters:**
-  - `kind` (string, default: `null`)
+  - `kind` (string, optional, default: `null`)
 - **Response Contract:** `ApiResult<IReadOnlyList<GateRequestModel>>`
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Staff,Manager,Admin) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.5.6 `POST` /api/staff/gate-requests/{requestId:long}/approve
 
 **Description:** Handles manual gate-open assistance requests from drivers and operator approvals.
 
 - **Action Method:** `GateRequestsController.ApproveAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Staff,Manager,Admin`
+- **Authentication:** Bearer JWT Required (Staff,Manager,Admin)
 - **Path Parameters:**
-  - `requestId` (long, required)
+  - `requestId` (long, required): Unique identifier for requestId.
 - **Request Body (`ApproveGateRequestModel`):**
   ```json
   {
@@ -2993,22 +2908,21 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Staff,Manager,Admin) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.5.7 `POST` /api/staff/gate-requests/{requestId:long}/refuse
 
 **Description:** Handles manual gate-open assistance requests from drivers and operator approvals.
 
 - **Action Method:** `GateRequestsController.RefuseAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Staff,Manager,Admin`
+- **Authentication:** Bearer JWT Required (Staff,Manager,Admin)
 - **Path Parameters:**
-  - `requestId` (long, required)
+  - `requestId` (long, required): Unique identifier for requestId.
 - **Request Body (`RefuseGateRequestModel`):**
   ```json
   {
@@ -3054,94 +2968,86 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Staff,Manager,Admin) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.5.8 `GET` /api/staff/lots
 
 **Description:** Executes GetLotsAsync operation.
 
 - **Action Method:** `StaffController.GetLotsAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Staff`
+- **Authentication:** Bearer JWT Required (Staff)
 - **Response Contract:** `ApiResult<IEnumerable<AssignedParkingLotModel>>`
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Staff) or lacks lot assignment scope.
 
 #### 4.5.9 `GET` /api/staff/lots/{lotId:int}/gates
 
 **Description:** Retrieves physical entry and exit gate configurations for a parking lot.
 
 - **Action Method:** `StaffGateController.GetGatesAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Staff,Manager,Admin`
+- **Authentication:** Bearer JWT Required (Staff,Manager,Admin)
 - **Path Parameters:**
-  - `lotId` (int, required)
+  - `lotId` (int, required): Unique identifier for lotId.
 - **Response Contract:** `ApiResult<IReadOnlyList<GateResponseModel>>`
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Staff,Manager,Admin) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.5.10 `GET` /api/staff/lots/{lotId:int}/zone-counters
 
 **Description:** Retrieves live vehicle counts and capacity balances for lot zones.
 
 - **Action Method:** `StaffGateController.GetZoneCountersAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Staff,Manager,Admin`
+- **Authentication:** Bearer JWT Required (Staff,Manager,Admin)
 - **Path Parameters:**
-  - `lotId` (int, required)
+  - `lotId` (int, required): Unique identifier for lotId.
 - **Response Contract:** `ApiResult<IReadOnlyList<ZoneCounterModel>>`
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Staff,Manager,Admin) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.5.11 `GET` /api/staff/lots/{lotId:int}/sessions
 
 **Description:** Retrieves active and pending parking sessions for the staff-assigned lot.
 
 - **Action Method:** `StaffGateController.GetSessionsAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Staff,Manager,Admin`
+- **Authentication:** Bearer JWT Required (Staff,Manager,Admin)
 - **Path Parameters:**
-  - `lotId` (int, required)
+  - `lotId` (int, required): Unique identifier for lotId.
 - **Query Parameters:**
-  - `status` (string, default: `null`)
-  - `plate` (string, default: `null`)
+  - `status` (string, optional, default: `null`)
+  - `plate` (string, optional, default: `null`)
 - **Response Contract:** `ApiResult<IReadOnlyList<SessionResponseModel>>`
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Staff,Manager,Admin) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.5.12 `GET` /api/staff/lots/{lotId:int}/sessions/history
 
-**Description:** Retrieves paginated historical parking sessions for the authenticated customer.
+**Description:** Retrieves paginated historical sessions for audit at the staff gate.
 
 - **Action Method:** `StaffGateController.GetHistoryAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Staff,Manager,Admin`
+- **Authentication:** Bearer JWT Required (Staff,Manager,Admin)
 - **Path Parameters:**
-  - `lotId` (int, required)
+  - `lotId` (int, required): Unique identifier for lotId.
 - **Query Parameters:**
-  - `plate` (string, default: `null`)
-  - `page` (int, default: `1`)
-  - `pageSize` (int, default: `10`)
+  - `plate` (string, optional, default: `null`)
+  - `page` (int, optional, default: `1`)
+  - `pageSize` (int, optional, default: `10`)
 - **Response Contract:** `ApiResult<StaffSessionHistoryPageModel>`
 - **Success Response Example (`200 OK`):**
   ```json
@@ -3194,27 +3100,26 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Staff,Manager,Admin) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.5.13 `GET` /api/staff/lots/{lotId:int}/payments
 
 **Description:** Executes GetPaymentHistoryAsync operation.
 
 - **Action Method:** `StaffGateController.GetPaymentHistoryAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Staff,Manager,Admin`
+- **Authentication:** Bearer JWT Required (Staff,Manager,Admin)
 - **Path Parameters:**
-  - `lotId` (int, required)
+  - `lotId` (int, required): Unique identifier for lotId.
 - **Query Parameters:**
-  - `method` (string, default: `null`)
-  - `plate` (string, default: `null`)
-  - `page` (int, default: `1`)
-  - `pageSize` (int, default: `10`)
+  - `method` (string, optional, default: `null`)
+  - `plate` (string, optional, default: `null`)
+  - `page` (int, optional, default: `1`)
+  - `pageSize` (int, optional, default: `10`)
 - **Response Contract:** `ApiResult<StaffPaymentHistoryPageModel>`
 - **Success Response Example (`200 OK`):**
   ```json
@@ -3243,26 +3148,25 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Staff,Manager,Admin) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.5.14 `GET` /api/staff/lots/{lotId:int}/sessions/lookup
 
 **Description:** Executes LookupAsync operation.
 
 - **Action Method:** `StaffGateController.LookupAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Staff,Manager,Admin`
+- **Authentication:** Bearer JWT Required (Staff,Manager,Admin)
 - **Path Parameters:**
-  - `lotId` (int, required)
+  - `lotId` (int, required): Unique identifier for lotId.
 - **Query Parameters:**
-  - `plate` (string, default: `null`)
-  - `ticket` (string, default: `null`)
-  - `code` (string, default: `null`)
+  - `plate` (string, optional, default: `null`)
+  - `ticket` (string, optional, default: `null`)
+  - `code` (string, optional, default: `null`)
 - **Response Contract:** `ApiResult<SessionResponseModel>`
 - **Success Response Example (`200 OK`):**
   ```json
@@ -3308,47 +3212,45 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Staff,Manager,Admin) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.5.15 `GET` /api/staff/lots/{lotId:int}/reservations
 
 **Description:** Executes GetReservationsAsync operation.
 
 - **Action Method:** `StaffGateController.GetReservationsAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Staff,Manager,Admin`
+- **Authentication:** Bearer JWT Required (Staff,Manager,Admin)
 - **Path Parameters:**
-  - `lotId` (int, required)
+  - `lotId` (int, required): Unique identifier for lotId.
 - **Query Parameters:**
-  - `status` (string, default: `null`)
-  - `from` (DateTime?, default: `null`)
-  - `to` (DateTime?, default: `null`)
+  - `status` (string, optional, default: `null`)
+  - `from` (DateTime?, optional, default: `null`)
+  - `to` (DateTime?, optional, default: `null`)
 - **Response Contract:** `ApiResult<IReadOnlyList<ReservationResponseModel>>`
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Staff,Manager,Admin) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.5.16 `GET` /api/staff/lots/{lotId:int}/reservations/lookup
 
 **Description:** Looks up advance reservations matching an incoming vehicle plate at the gate.
 
 - **Action Method:** `StaffGateController.LookupReservationAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Staff,Manager,Admin`
+- **Authentication:** Bearer JWT Required (Staff,Manager,Admin)
 - **Path Parameters:**
-  - `lotId` (int, required)
+  - `lotId` (int, required): Unique identifier for lotId.
 - **Query Parameters:**
-  - `code` (string, default: `null`)
-  - `qr` (string, default: `null`)
-  - `plate` (string, default: `null`)
+  - `code` (string, optional, default: `null`)
+  - `qr` (string, optional, default: `null`)
+  - `plate` (string, optional, default: `null`)
 - **Response Contract:** `ApiResult<GateReservationLookupModel>`
 - **Success Response Example (`200 OK`):**
   ```json
@@ -3404,41 +3306,39 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Staff,Manager,Admin) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.5.17 `GET` /api/staff/lots/{lotId:int}/plate-lists
 
 **Description:** Retrieves blacklisted and whitelisted plates active for the lot.
 
 - **Action Method:** `StaffGateController.GetPlateListsAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Staff,Manager,Admin`
+- **Authentication:** Bearer JWT Required (Staff,Manager,Admin)
 - **Path Parameters:**
-  - `lotId` (int, required)
+  - `lotId` (int, required): Unique identifier for lotId.
 - **Query Parameters:**
-  - `listType` (string, default: `null`)
+  - `listType` (string, optional, default: `null`)
 - **Response Contract:** `ApiResult<IReadOnlyList<PlateListEntryModel>>`
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Staff,Manager,Admin) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.5.18 `POST` /api/staff/lots/{lotId:int}/check-in
 
 **Description:** Executes vehicle check-in at a gate lane, validates reservations/blacklists, and triggers barrier opening.
 
 - **Action Method:** `StaffGateController.CheckInAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Staff,Manager,Admin`
+- **Authentication:** Bearer JWT Required (Staff,Manager,Admin)
 - **Path Parameters:**
-  - `lotId` (int, required)
+  - `lotId` (int, required): Unique identifier for lotId.
 - **Request Body (`CheckInModel`):**
   ```json
   {
@@ -3521,22 +3421,22 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Staff,Manager,Admin) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
+  - `409 Conflict`: Slot or capacity conflict when override flags are omitted.
 
 #### 4.5.19 `GET` /api/staff/sessions/{id:long}
 
 **Description:** Executes GetSessionAsync operation.
 
 - **Action Method:** `StaffGateController.GetSessionAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Staff,Manager,Admin`
+- **Authentication:** Bearer JWT Required (Staff,Manager,Admin)
 - **Path Parameters:**
-  - `id` (long, required)
+  - `id` (long, required): Unique identifier for id.
 - **Response Contract:** `ApiResult<SessionResponseModel>`
 - **Success Response Example (`200 OK`):**
   ```json
@@ -3582,22 +3482,20 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Staff,Manager,Admin) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.5.20 `POST` /api/staff/sessions/{id:long}/entry-confirm
 
 **Description:** Confirms that the vehicle has successfully crossed the physical barrier into the lot.
 
 - **Action Method:** `StaffGateController.ConfirmEntryAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Staff,Manager,Admin`
+- **Authentication:** Bearer JWT Required (Staff,Manager,Admin)
 - **Path Parameters:**
-  - `id` (long, required)
+  - `id` (long, required): Unique identifier for id.
 - **Response Contract:** `ApiResult<SessionResponseModel>`
 - **Success Response Example (`200 OK`):**
   ```json
@@ -3643,22 +3541,21 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Staff,Manager,Admin) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.5.21 `POST` /api/staff/sessions/{id:long}/entry-cancel
 
 **Description:** Cancels a pending entry check-in when a vehicle reverses away from the lane.
 
 - **Action Method:** `StaffGateController.CancelEntryAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Staff,Manager,Admin`
+- **Authentication:** Bearer JWT Required (Staff,Manager,Admin)
 - **Path Parameters:**
-  - `id` (long, required)
+  - `id` (long, required): Unique identifier for id.
 - **Response Contract:** `ApiResult<SessionResponseModel>`
 - **Success Response Example (`200 OK`):**
   ```json
@@ -3704,22 +3601,21 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Staff,Manager,Admin) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.5.22 `POST` /api/staff/sessions/{id:long}/quote
 
 **Description:** Calculates parking fees, lost-ticket fines, and overtime charges at the exit lane.
 
 - **Action Method:** `StaffGateController.QuoteAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Staff,Manager,Admin`
+- **Authentication:** Bearer JWT Required (Staff,Manager,Admin)
 - **Path Parameters:**
-  - `id` (long, required)
+  - `id` (long, required): Unique identifier for id.
 - **Request Body (`CheckoutQuoteRequestModel`):**
   ```json
   {
@@ -3805,22 +3701,21 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Staff,Manager,Admin) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.5.23 `POST` /api/staff/sessions/{id:long}/cancel-payment
 
 **Description:** Cancels an in-progress payment attempt at the gate.
 
 - **Action Method:** `StaffGateController.CancelPaymentAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Staff,Manager,Admin`
+- **Authentication:** Bearer JWT Required (Staff,Manager,Admin)
 - **Path Parameters:**
-  - `id` (long, required)
+  - `id` (long, required): Unique identifier for id.
 - **Response Contract:** `ApiResult<SessionResponseModel>`
 - **Success Response Example (`200 OK`):**
   ```json
@@ -3866,22 +3761,21 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Staff,Manager,Admin) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.5.24 `POST` /api/staff/sessions/{id:long}/payments/cash
 
 **Description:** Records cash fee collection by gate staff and authorizes exit barrier opening.
 
 - **Action Method:** `StaffGateController.PayCashAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Staff,Manager,Admin`
+- **Authentication:** Bearer JWT Required (Staff,Manager,Admin)
 - **Path Parameters:**
-  - `id` (long, required)
+  - `id` (long, required): Unique identifier for id.
 - **Request Body (`CashPaymentModel`):**
   ```json
   {
@@ -3919,22 +3813,21 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Staff,Manager,Admin) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.5.25 `POST` /api/staff/sessions/{id:long}/payments/online
 
 **Description:** Initiates an in-person QR payment at the gate lane via payment gateway.
 
 - **Action Method:** `StaffGateController.PayOnlineAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Staff,Manager,Admin`
+- **Authentication:** Bearer JWT Required (Staff,Manager,Admin)
 - **Path Parameters:**
-  - `id` (long, required)
+  - `id` (long, required): Unique identifier for id.
 - **Request Body (`LanePaymentModel`):**
   ```json
   {
@@ -3972,22 +3865,21 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Staff,Manager,Admin) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.5.26 `POST` /api/staff/sessions/{id:long}/check-out
 
 **Description:** Executes CheckoutAsync operation.
 
 - **Action Method:** `StaffGateController.CheckoutAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Staff,Manager,Admin`
+- **Authentication:** Bearer JWT Required (Staff,Manager,Admin)
 - **Path Parameters:**
-  - `id` (long, required)
+  - `id` (long, required): Unique identifier for id.
 - **Request Body (`CheckoutModel`):**
   ```json
   {
@@ -4058,22 +3950,21 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Staff,Manager,Admin) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.5.27 `POST` /api/staff/sessions/{id:long}/lost-ticket
 
 **Description:** Executes LostTicketAsync operation.
 
 - **Action Method:** `StaffGateController.LostTicketAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Staff,Manager,Admin`
+- **Authentication:** Bearer JWT Required (Staff,Manager,Admin)
 - **Path Parameters:**
-  - `id` (long, required)
+  - `id` (long, required): Unique identifier for id.
 - **Request Body (`LostTicketModel`):**
   ```json
   {
@@ -4126,12 +4017,12 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Staff,Manager,Admin) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 ---
 
@@ -4142,42 +4033,38 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
 **Description:** Retrieves parking lots assigned to the authenticated Manager.
 
 - **Action Method:** `ManagerController.GetLotsAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Manager`
+- **Authentication:** Bearer JWT Required (Manager)
 - **Response Contract:** `ApiResult<IEnumerable<AssignedParkingLotModel>>`
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Manager) or lacks lot assignment scope.
 
 #### 4.6.2 `GET` /api/manager/staff
 
 **Description:** Retrieves staff accounts assigned to the manager lots.
 
 - **Action Method:** `ManagerController.GetStaffAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Manager`
+- **Authentication:** Bearer JWT Required (Manager)
 - **Query Parameters:**
-  - `parkingLotId` (int?, default: `null`)
-  - `isActive` (bool?, default: `null`)
-  - `searchTerm` (string, default: `null`)
+  - `parkingLotId` (int?, optional, default: `null`)
+  - `isActive` (bool?, optional, default: `null`)
+  - `searchTerm` (string, optional, default: `null`)
 - **Response Contract:** `ApiResult<IEnumerable<EmployeeAccountResponseModel>>`
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Manager) or lacks lot assignment scope.
 
 #### 4.6.3 `GET` /api/manager/staff/{id}
 
 **Description:** Executes GetStaffByIdAsync operation.
 
 - **Action Method:** `ManagerController.GetStaffByIdAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Manager`
+- **Authentication:** Bearer JWT Required (Manager)
 - **Path Parameters:**
-  - `id` (string, required)
+  - `id` (string, required): Unique identifier for id.
 - **Response Contract:** `ApiResult<EmployeeAccountResponseModel>`
 - **Success Response Example (`200 OK`):**
   ```json
@@ -4205,20 +4092,18 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Manager) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.6.4 `POST` /api/manager/staff
 
 **Description:** Provisions a new staff operator account assigned to the manager lots.
 
 - **Action Method:** `ManagerController.CreateStaffAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Manager`
+- **Authentication:** Bearer JWT Required (Manager)
 - **Request Body (`CreateStaffAccountModel`):**
   ```json
   {
@@ -4258,21 +4143,20 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Manager) or lacks lot assignment scope.
 
 #### 4.6.5 `PUT` /api/manager/staff/{id}
 
 **Description:** Updates staff operator account details.
 
 - **Action Method:** `ManagerController.UpdateStaffAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Manager`
+- **Authentication:** Bearer JWT Required (Manager)
 - **Path Parameters:**
-  - `id` (string, required)
+  - `id` (string, required): Unique identifier for id.
 - **Request Body (`UpdateEmployeeAccountModel`):**
   ```json
   {
@@ -4308,22 +4192,21 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Manager) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.6.6 `PUT` /api/manager/staff/{id}/lot
 
 **Description:** Assigns or reassigns a staff operator to a specific parking lot.
 
 - **Action Method:** `ManagerController.AssignStaffLotAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Manager`
+- **Authentication:** Bearer JWT Required (Manager)
 - **Path Parameters:**
-  - `id` (string, required)
+  - `id` (string, required): Unique identifier for id.
 - **Request Body (`AssignStaffParkingLotModel`):**
   ```json
   {
@@ -4357,22 +4240,21 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Manager) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.6.7 `PATCH` /api/manager/staff/{id}/status
 
 **Description:** Activates or deactivates a staff operator account.
 
 - **Action Method:** `ManagerController.UpdateStaffStatusAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Manager`
+- **Authentication:** Bearer JWT Required (Manager)
 - **Path Parameters:**
-  - `id` (string, required)
+  - `id` (string, required): Unique identifier for id.
 - **Request Body (`UpdateUserStatusModel`):**
   ```json
   {
@@ -4406,60 +4288,56 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Manager) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.6.8 `DELETE` /api/manager/staff/{id}
 
 **Description:** Removes a staff operator account.
 
 - **Action Method:** `ManagerController.DeleteStaffAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Manager`
+- **Authentication:** Bearer JWT Required (Manager)
 - **Path Parameters:**
-  - `id` (string, required)
+  - `id` (string, required): Unique identifier for id.
 - **Response Contract:** `ApiResult<bool>`
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Manager) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.6.9 `GET` /api/manager/lots/{lotId:int}/reservations
 
 **Description:** Executes GetReservationsAsync operation.
 
 - **Action Method:** `ManagerOperationsController.GetReservationsAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Manager,Admin`
+- **Authentication:** Bearer JWT Required (Manager,Admin)
 - **Path Parameters:**
-  - `lotId` (int, required)
+  - `lotId` (int, required): Unique identifier for lotId.
 - **Query Parameters:**
-  - `status` (string, default: `null`)
-  - `from` (DateTime?, default: `null`)
-  - `to` (DateTime?, default: `null`)
+  - `status` (string, optional, default: `null`)
+  - `from` (DateTime?, optional, default: `null`)
+  - `to` (DateTime?, optional, default: `null`)
 - **Response Contract:** `ApiResult<IReadOnlyList<ReservationResponseModel>>`
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Manager,Admin) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.6.10 `POST` /api/manager/reservations/{id:long}/cancel
 
 **Description:** Executes CancelReservationAsync operation.
 
 - **Action Method:** `ManagerOperationsController.CancelReservationAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Manager,Admin`
+- **Authentication:** Bearer JWT Required (Manager,Admin)
 - **Path Parameters:**
-  - `id` (long, required)
+  - `id` (long, required): Unique identifier for id.
 - **Request Body (`CancelReservationModel`):**
   ```json
   {
@@ -4531,22 +4409,21 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Manager,Admin) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.6.11 `POST` /api/manager/sessions/{id:long}/abnormal-close
 
 **Description:** Forces abnormal session closure in exceptional conditions (e.g. vehicle towed).
 
 - **Action Method:** `ManagerOperationsController.CloseAbnormallyAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Manager,Admin`
+- **Authentication:** Bearer JWT Required (Manager,Admin)
 - **Path Parameters:**
-  - `id` (long, required)
+  - `id` (long, required): Unique identifier for id.
 - **Request Body (`SessionDecisionModel`):**
   ```json
   {
@@ -4598,22 +4475,21 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Manager,Admin) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.6.12 `POST` /api/manager/sessions/{id:long}/lost-ticket/approve
 
 **Description:** Approves a lost-ticket report, allowing fee payment with standard penalty.
 
 - **Action Method:** `ManagerOperationsController.ApproveLostTicketAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Manager,Admin`
+- **Authentication:** Bearer JWT Required (Manager,Admin)
 - **Path Parameters:**
-  - `id` (long, required)
+  - `id` (long, required): Unique identifier for id.
 - **Request Body (`SessionDecisionModel`):**
   ```json
   {
@@ -4665,22 +4541,21 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Manager,Admin) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.6.13 `POST` /api/manager/sessions/{id:long}/lost-ticket/reject
 
 **Description:** Rejects a lost-ticket report, requiring customer to present full vehicle documentation.
 
 - **Action Method:** `ManagerOperationsController.RejectLostTicketAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Manager,Admin`
+- **Authentication:** Bearer JWT Required (Manager,Admin)
 - **Path Parameters:**
-  - `id` (long, required)
+  - `id` (long, required): Unique identifier for id.
 - **Request Body (`SessionDecisionModel`):**
   ```json
   {
@@ -4732,41 +4607,39 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Manager,Admin) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.6.14 `GET` /api/manager/lots/{lotId:int}/plate-lists
 
 **Description:** Retrieves blacklist and whitelist plate entries for manager-assigned lots.
 
 - **Action Method:** `ManagerOperationsController.GetPlateListsAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Manager,Admin`
+- **Authentication:** Bearer JWT Required (Manager,Admin)
 - **Path Parameters:**
-  - `lotId` (int, required)
+  - `lotId` (int, required): Unique identifier for lotId.
 - **Query Parameters:**
-  - `listType` (string, default: `null`)
+  - `listType` (string, optional, default: `null`)
 - **Response Contract:** `ApiResult<IReadOnlyList<PlateListEntryModel>>`
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Manager,Admin) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.6.15 `POST` /api/manager/lots/{lotId:int}/plate-lists
 
 **Description:** Adds a license plate to the lot blacklist or whitelist.
 
 - **Action Method:** `ManagerOperationsController.AddPlateListEntryAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Manager,Admin`
+- **Authentication:** Bearer JWT Required (Manager,Admin)
 - **Path Parameters:**
-  - `lotId` (int, required)
+  - `lotId` (int, required): Unique identifier for lotId.
 - **Request Body (`CreatePlateListEntryModel`):**
   ```json
   {
@@ -4794,60 +4667,56 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Manager,Admin) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.6.16 `DELETE` /api/manager/lots/{lotId:int}/plate-lists/{id:int}
 
 **Description:** Removes a license plate entry from the lot blacklist or whitelist.
 
 - **Action Method:** `ManagerOperationsController.RemovePlateListEntryAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Manager,Admin`
+- **Authentication:** Bearer JWT Required (Manager,Admin)
 - **Path Parameters:**
-  - `lotId` (int, required)
-  - `id` (int, required)
+  - `lotId` (int, required): Unique identifier for lotId.
+  - `id` (int, required): Unique identifier for id.
 - **Response Contract:** `ApiResult<bool>`
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Manager,Admin) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.6.17 `GET` /api/manager/lots/{lotId:int}/pricing-rules
 
 **Description:** Retrieves active and historical pricing tariff rules for a parking lot.
 
 - **Action Method:** `ManagerPricingController.GetPricingRulesAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Manager,Admin`
+- **Authentication:** Bearer JWT Required (Manager,Admin)
 - **Path Parameters:**
-  - `lotId` (int, required)
+  - `lotId` (int, required): Unique identifier for lotId.
 - **Query Parameters:**
-  - `status` (string, default: `null`)
+  - `status` (string, optional, default: `null`)
 - **Response Contract:** `ApiResult<IReadOnlyList<PricingRuleModel>>`
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Manager,Admin) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.6.18 `GET` /api/manager/lots/{lotId:int}/pricing-rules/{id:int}
 
 **Description:** Retrieves details of a specific pricing rule.
 
 - **Action Method:** `ManagerPricingController.GetPricingRuleByIdAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Manager,Admin`
+- **Authentication:** Bearer JWT Required (Manager,Admin)
 - **Path Parameters:**
-  - `lotId` (int, required)
-  - `id` (int, required)
+  - `lotId` (int, required): Unique identifier for lotId.
+  - `id` (int, required): Unique identifier for id.
 - **Response Contract:** `ApiResult<PricingRuleModel>`
 - **Success Response Example (`200 OK`):**
   ```json
@@ -4894,22 +4763,20 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Manager,Admin) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.6.19 `POST` /api/manager/lots/{lotId:int}/pricing-rules
 
 **Description:** Creates a new pricing rule for a parking lot.
 
 - **Action Method:** `ManagerPricingController.CreatePricingRuleAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Manager,Admin`
+- **Authentication:** Bearer JWT Required (Manager,Admin)
 - **Path Parameters:**
-  - `lotId` (int, required)
+  - `lotId` (int, required): Unique identifier for lotId.
 - **Request Body (`CreatePricingRuleModel`):**
   ```json
   {
@@ -4987,23 +4854,22 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Manager,Admin) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.6.20 `PUT` /api/manager/lots/{lotId:int}/pricing-rules/{id:int}
 
 **Description:** Updates an existing pricing rule, creating a new version in pricing history.
 
 - **Action Method:** `ManagerPricingController.UpdatePricingRuleAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Manager,Admin`
+- **Authentication:** Bearer JWT Required (Manager,Admin)
 - **Path Parameters:**
-  - `lotId` (int, required)
-  - `id` (int, required)
+  - `lotId` (int, required): Unique identifier for lotId.
+  - `id` (int, required): Unique identifier for id.
 - **Request Body (`UpdatePricingRuleModel`):**
   ```json
   {
@@ -5080,23 +4946,22 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Manager,Admin) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.6.21 `PATCH` /api/manager/lots/{lotId:int}/pricing-rules/{id:int}/status
 
 **Description:** Activates, deactivates, or archives a pricing rule.
 
 - **Action Method:** `ManagerPricingController.SetPricingRuleStatusAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Manager,Admin`
+- **Authentication:** Bearer JWT Required (Manager,Admin)
 - **Path Parameters:**
-  - `lotId` (int, required)
-  - `id` (int, required)
+  - `lotId` (int, required): Unique identifier for lotId.
+  - `id` (int, required): Unique identifier for id.
 - **Request Body (`SetPricingRuleStatusModel`):**
   ```json
   {
@@ -5150,40 +5015,37 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Manager,Admin) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.6.22 `DELETE` /api/manager/lots/{lotId:int}/pricing-rules/{id:int}
 
 **Description:** Archives a pricing rule.
 
 - **Action Method:** `ManagerPricingController.DeletePricingRuleAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Manager,Admin`
+- **Authentication:** Bearer JWT Required (Manager,Admin)
 - **Path Parameters:**
-  - `lotId` (int, required)
-  - `id` (int, required)
+  - `lotId` (int, required): Unique identifier for lotId.
+  - `id` (int, required): Unique identifier for id.
 - **Response Contract:** `ApiResult<bool>`
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Manager,Admin) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.6.23 `POST` /api/manager/lots/{lotId:int}/pricing-rules/simulate
 
 **Description:** Simulates fee calculations across hypothetical durations using active pricing rules.
 
 - **Action Method:** `ManagerPricingController.SimulatePricingAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Manager,Admin`
+- **Authentication:** Bearer JWT Required (Manager,Admin)
 - **Path Parameters:**
-  - `lotId` (int, required)
+  - `lotId` (int, required): Unique identifier for lotId.
 - **Request Body (`PricingSimulationRequestModel`):**
   ```json
   {
@@ -5226,12 +5088,12 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Manager,Admin) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 ---
 
@@ -5242,24 +5104,20 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
 **Description:** Retrieves list of rejected vehicle submissions within the last 30 days.
 
 - **Action Method:** `VehicleDocumentsController.GetRecentlyRejectedAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Authenticated`
+- **Authentication:** Bearer JWT Required (Authenticated)
 - **Response Contract:** `ApiResult<List<RejectedVehicleModel>>`
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
 
 #### 4.7.2 `GET` /api/users/profile/vehicles/{vehicleId:guid}/documents
 
 **Description:** Executes GetLatestAsync operation.
 
 - **Action Method:** `VehicleDocumentsController.GetLatestAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Authenticated`
+- **Authentication:** Bearer JWT Required (Authenticated)
 - **Path Parameters:**
-  - `vehicleId` (guid, required)
+  - `vehicleId` (guid, required): Unique identifier for vehicleId.
 - **Response Contract:** `ApiResult<VehicleVerificationModel>`
 - **Success Response Example (`200 OK`):**
   ```json
@@ -5296,24 +5154,21 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.7.3 `POST` /api/users/profile/vehicles/{vehicleId:guid}/documents/{documentType}/{side}
 
 **Description:** Executes UploadAsync operation.
 
 - **Action Method:** `VehicleDocumentsController.UploadAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Authenticated`
+- **Authentication:** Bearer JWT Required (Authenticated)
 - **Path Parameters:**
-  - `vehicleId` (guid, required)
-  - `documentType` (string, required)
-  - `side` (string, required)
+  - `vehicleId` (guid, required): Unique identifier for vehicleId.
+  - `documentType` (string, required): Unique identifier for documentType.
+  - `side` (string, required): Unique identifier for side.
 - **Response Contract:** `ApiResult<VehicleVerificationModel>`
 - **Success Response Example (`200 OK`):**
   ```json
@@ -5350,22 +5205,20 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.7.4 `POST` /api/users/profile/vehicles/{vehicleId:guid}/documents/submit
 
 **Description:** Executes SubmitAsync operation.
 
 - **Action Method:** `VehicleDocumentsController.SubmitAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Authenticated`
+- **Authentication:** Bearer JWT Required (Authenticated)
 - **Path Parameters:**
-  - `vehicleId` (guid, required)
+  - `vehicleId` (guid, required): Unique identifier for vehicleId.
 - **Response Contract:** `ApiResult<VehicleVerificationModel>`
 - **Success Response Example (`200 OK`):**
   ```json
@@ -5402,56 +5255,52 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
+  - `422 Unprocessable Entity`: Mandatory paper sides are missing.
 
 #### 4.7.5 `GET` /api/users/profile/vehicles/{vehicleId:guid}/documents/files/{documentId:guid}
 
 **Description:** Streams the binary image/PDF of an uploaded vehicle document.
 
 - **Action Method:** `VehicleDocumentsController.GetFileAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Authenticated`
+- **Authentication:** Bearer JWT Required (Authenticated)
 - **Path Parameters:**
-  - `vehicleId` (guid, required)
-  - `documentId` (guid, required)
+  - `vehicleId` (guid, required): Unique identifier for vehicleId.
+  - `documentId` (guid, required): Unique identifier for documentId.
 - **Response Contract:** `IActionResult`
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Success Response (`200 OK`):** Binary file octet stream with `Content-Type: image/jpeg`, `image/png`, or `application/pdf`.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.7.6 `GET` /api/vehicle-verifications
 
 **Description:** Retrieves the operator queue of vehicle paper registrations pending review.
 
 - **Action Method:** `VehicleVerificationsController.GetQueueAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Staff,Manager,Admin`
+- **Authentication:** Bearer JWT Required (Staff,Manager,Admin)
 - **Query Parameters:**
-  - `status` (string, default: `null`)
+  - `status` (string, optional, default: `null`)
 - **Response Contract:** `ApiResult<List<VehicleVerificationReviewModel>>`
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Staff,Manager,Admin) or lacks lot assignment scope.
 
 #### 4.7.7 `GET` /api/vehicle-verifications/{verificationId:guid}
 
 **Description:** Executes GetAsync operation.
 
 - **Action Method:** `VehicleVerificationsController.GetAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Staff,Manager,Admin`
+- **Authentication:** Bearer JWT Required (Staff,Manager,Admin)
 - **Path Parameters:**
-  - `verificationId` (guid, required)
+  - `verificationId` (guid, required): Unique identifier for verificationId.
 - **Response Contract:** `ApiResult<VehicleVerificationReviewModel>`
 - **Success Response Example (`200 OK`):**
   ```json
@@ -5470,40 +5319,37 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Staff,Manager,Admin) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.7.8 `GET` /api/vehicle-verifications/{verificationId:guid}/files/{documentId:guid}
 
 **Description:** Streams the binary image/PDF of an uploaded vehicle document.
 
 - **Action Method:** `VehicleVerificationsController.GetFileAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Staff,Manager,Admin`
+- **Authentication:** Bearer JWT Required (Staff,Manager,Admin)
 - **Path Parameters:**
-  - `verificationId` (guid, required)
-  - `documentId` (guid, required)
+  - `verificationId` (guid, required): Unique identifier for verificationId.
+  - `documentId` (guid, required): Unique identifier for documentId.
 - **Response Contract:** `IActionResult`
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Success Response (`200 OK`):** Binary file octet stream with `Content-Type: image/jpeg`, `image/png`, or `application/pdf`.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Staff,Manager,Admin) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.7.9 `POST` /api/vehicle-verifications/{verificationId:guid}/review
 
 **Description:** Records operator approval or rejection for submitted vehicle documents.
 
 - **Action Method:** `VehicleVerificationsController.ReviewAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Staff,Manager,Admin`
+- **Authentication:** Bearer JWT Required (Staff,Manager,Admin)
 - **Path Parameters:**
-  - `verificationId` (guid, required)
+  - `verificationId` (guid, required): Unique identifier for verificationId.
 - **Request Body (`ReviewVehicleVerificationModel`):**
   ```json
   {
@@ -5529,12 +5375,12 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Staff,Manager,Admin) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 ---
 
@@ -5545,10 +5391,9 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
 **Description:** Executes GetAsync operation.
 
 - **Action Method:** `PaymentsController.GetAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Authenticated`
+- **Authentication:** Bearer JWT Required (Authenticated)
 - **Path Parameters:**
-  - `id` (long, required)
+  - `id` (long, required): Unique identifier for id.
 - **Response Contract:** `ApiResult<PaymentResponseModel>`
 - **Success Response Example (`200 OK`):**
   ```json
@@ -5579,22 +5424,19 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.8.2 `POST` /api/payments/{id:long}/check
 
 **Description:** Executes CheckAsync operation.
 
 - **Action Method:** `PaymentsController.CheckAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Authenticated`
+- **Authentication:** Bearer JWT Required (Authenticated)
 - **Path Parameters:**
-  - `id` (long, required)
+  - `id` (long, required): Unique identifier for id.
 - **Response Contract:** `ApiResult<PaymentCallbackResultModel>`
 - **Success Response Example (`200 OK`):**
   ```json
@@ -5630,12 +5472,11 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.8.3 `GET` /api/payments/simulation
 
@@ -5654,19 +5495,17 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
 
 #### 4.8.4 `POST` /api/payments/{id:long}/simulate-success
 
 **Description:** Executes SimulateSuccessAsync operation.
 
 - **Action Method:** `PaymentsController.SimulateSuccessAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Authenticated`
+- **Authentication:** Bearer JWT Required (Authenticated)
 - **Path Parameters:**
-  - `id` (long, required)
+  - `id` (long, required): Unique identifier for id.
 - **Response Contract:** `ApiResult<PaymentCallbackResultModel>`
 - **Success Response Example (`200 OK`):**
   ```json
@@ -5702,12 +5541,11 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.8.5 `GET` /api/payments/vnpay/return
 
@@ -5750,9 +5588,8 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
 
 #### 4.8.6 `GET` /api/payments/vnpay/ipn
 
@@ -5761,9 +5598,15 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
 - **Action Method:** `PaymentsController.VnPayIpnAsync`
 - **Authentication:** None (Public)
 - **Response Contract:** `IActionResult`
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
+- **Success Response Example (`200 OK`):**
+  ```json
+  {
+    "RspCode": "00",
+    "Message": "Confirm Success"
+  }
+  ```
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
 
 #### 4.8.7 `GET` /api/payments/momo/return
 
@@ -5806,9 +5649,8 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
 
 #### 4.8.8 `POST` /api/payments/momo/ipn
 
@@ -5817,17 +5659,17 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
 - **Action Method:** `PaymentsController.MoMoIpnAsync`
 - **Authentication:** None (Public)
 - **Response Contract:** `NoContent (204)`
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
+- **Success Response (`204 NoContent`):** Empty response body.
+- **Applicable HTTP Status Codes:**
+  - `204 NoContent`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
 
 #### 4.8.9 `GET` /api/wallet
 
 **Description:** Executes GetAsync operation.
 
 - **Action Method:** `WalletController.GetAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Authenticated`
+- **Authentication:** Bearer JWT Required (Authenticated)
 - **Response Contract:** `ApiResult<WalletResponseModel>`
 - **Success Response Example (`200 OK`):**
   ```json
@@ -5857,19 +5699,16 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
 
 #### 4.8.10 `POST` /api/wallet/topup
 
 **Description:** Executes TopUpAsync operation.
 
 - **Action Method:** `WalletController.TopUpAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Authenticated`
+- **Authentication:** Bearer JWT Required (Authenticated)
 - **Request Body (`TopUpWalletModel`):**
   ```json
   {
@@ -5908,19 +5747,17 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
 
 #### 4.8.11 `POST` /api/wallet/withdraw
 
 **Description:** Executes WithdrawAsync operation.
 
 - **Action Method:** `WalletController.WithdrawAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Authenticated`
+- **Authentication:** Bearer JWT Required (Authenticated)
 - **Request Body (`WithdrawWalletModel`):**
   ```json
   {
@@ -5959,11 +5796,10 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
 
 ---
 
@@ -5974,12 +5810,11 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
 **Description:** Retrieves system-wide aggregated revenue metrics across all parking lots.
 
 - **Action Method:** `AdminRevenueController.GetRevenueAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Admin`
+- **Authentication:** Bearer JWT Required (Admin)
 - **Query Parameters:**
-  - `startDate` (string, default: `null`)
-  - `endDate` (string, default: `null`)
-  - `parkingLotId` (int?, default: `null`)
+  - `startDate` (string, optional, default: `null`)
+  - `endDate` (string, optional, default: `null`)
+  - `parkingLotId` (int?, optional, default: `null`)
 - **Response Contract:** `ApiResult<AdminRevenueReportResponse>`
 - **Success Response Example (`200 OK`):**
   ```json
@@ -6011,23 +5846,22 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Admin) or lacks lot assignment scope.
 
 #### 4.9.2 `GET` /api/manager/reports/revenue
 
 **Description:** Retrieves aggregated revenue metrics and payment-method breakdown scoped to manager-assigned lots.
 
 - **Action Method:** `ManagerRevenueController.GetRevenueAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Manager`
+- **Authentication:** Bearer JWT Required (Manager)
 - **Query Parameters:**
-  - `startDate` (string, default: `null`)
-  - `endDate` (string, default: `null`)
-  - `parkingLotId` (int?, default: `null`)
+  - `startDate` (string, optional, default: `null`)
+  - `endDate` (string, optional, default: `null`)
+  - `parkingLotId` (int?, optional, default: `null`)
 - **Response Contract:** `ApiResult<ManagerRevenueReportResponse>`
 - **Success Response Example (`200 OK`):**
   ```json
@@ -6059,11 +5893,11 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Manager) or lacks lot assignment scope.
 
 ---
 
@@ -6074,8 +5908,7 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
 **Description:** Creates a new Manager account and assigns managed parking lots.
 
 - **Action Method:** `AdminController.CreateManagerAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Admin`
+- **Authentication:** Bearer JWT Required (Admin)
 - **Request Body (`CreateEmployeeAccountModel`):**
   ```json
   {
@@ -6102,38 +5935,36 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Admin) or lacks lot assignment scope.
 
 #### 4.10.2 `GET` /api/admin/managers
 
 **Description:** Retrieves all Manager accounts with their lot assignments.
 
 - **Action Method:** `AdminController.GetManagersAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Admin`
+- **Authentication:** Bearer JWT Required (Admin)
 - **Query Parameters:**
-  - `isActive` (bool?, default: `null`)
-  - `searchTerm` (string, default: `null`)
+  - `isActive` (bool?, optional, default: `null`)
+  - `searchTerm` (string, optional, default: `null`)
 - **Response Contract:** `ApiResult<IEnumerable<EmployeeAccountResponseModel>>`
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Admin) or lacks lot assignment scope.
 
 #### 4.10.3 `GET` /api/admin/managers/{id}
 
 **Description:** Retrieves details of a specific Manager account.
 
 - **Action Method:** `AdminController.GetManagerAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Admin`
+- **Authentication:** Bearer JWT Required (Admin)
 - **Path Parameters:**
-  - `id` (string, required)
+  - `id` (string, required): Unique identifier for id.
 - **Response Contract:** `ApiResult<EmployeeAccountResponseModel>`
 - **Success Response Example (`200 OK`):**
   ```json
@@ -6161,22 +5992,20 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Admin) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.10.4 `PUT` /api/admin/managers/{id}
 
 **Description:** Updates Manager account information.
 
 - **Action Method:** `AdminController.UpdateManagerAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Admin`
+- **Authentication:** Bearer JWT Required (Admin)
 - **Path Parameters:**
-  - `id` (string, required)
+  - `id` (string, required): Unique identifier for id.
 - **Request Body (`UpdateEmployeeAccountModel`):**
   ```json
   {
@@ -6212,22 +6041,21 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Admin) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.10.5 `PATCH` /api/admin/managers/{id}/status
 
 **Description:** Activates or deactivates a Manager account.
 
 - **Action Method:** `AdminController.UpdateManagerStatusAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Admin`
+- **Authentication:** Bearer JWT Required (Admin)
 - **Path Parameters:**
-  - `id` (string, required)
+  - `id` (string, required): Unique identifier for id.
 - **Request Body (`UpdateUserStatusModel`):**
   ```json
   {
@@ -6261,22 +6089,21 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Admin) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.10.6 `PUT` /api/admin/managers/{id}/lots
 
 **Description:** Updates parking lot assignments for a Manager.
 
 - **Action Method:** `AdminController.AssignManagerLotsAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Admin`
+- **Authentication:** Bearer JWT Required (Admin)
 - **Path Parameters:**
-  - `id` (string, required)
+  - `id` (string, required): Unique identifier for id.
 - **Request Body (`AssignParkingLotsModel`):**
   ```json
   {
@@ -6313,40 +6140,38 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Admin) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.10.7 `GET` /api/admin/users
 
 **Description:** Executes GetInternalUsersAsync operation.
 
 - **Action Method:** `AdminController.GetInternalUsersAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Admin`
+- **Authentication:** Bearer JWT Required (Admin)
 - **Query Parameters:**
-  - `role` (string, default: `null`)
-  - `isActive` (bool?, default: `null`)
-  - `searchTerm` (string, default: `null`)
+  - `role` (string, optional, default: `null`)
+  - `isActive` (bool?, optional, default: `null`)
+  - `searchTerm` (string, optional, default: `null`)
 - **Response Contract:** `ApiResult<IEnumerable<UserResponseModel>>`
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Admin) or lacks lot assignment scope.
 
 #### 4.10.8 `PATCH` /api/admin/users/{id}/status
 
-**Description:** Activates or deactivates an internal user account.
+**Description:** Executes UpdateStatusAsync operation.
 
 - **Action Method:** `AdminController.UpdateStatusAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Admin`
+- **Authentication:** Bearer JWT Required (Admin)
 - **Path Parameters:**
-  - `id` (string, required)
+  - `id` (string, required): Unique identifier for id.
 - **Request Body (`UpdateUserStatusModel`):**
   ```json
   {
@@ -6354,12 +6179,12 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
   }
   ```
 - **Response Contract:** `ApiResult<bool>`
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Admin) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 ---
 
@@ -6370,8 +6195,7 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
 **Description:** Retrieves current sandbox simulation mode settings and simulated system clock.
 
 - **Action Method:** `AdminSimulationController.GetAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Admin`
+- **Authentication:** Bearer JWT Required (Admin)
 - **Response Contract:** `ApiResult<ParkingSimulationResponseModel>`
 - **Success Response Example (`200 OK`):**
   ```json
@@ -6400,19 +6224,17 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Admin) or lacks lot assignment scope.
 
 #### 4.11.2 `PUT` /api/admin/simulation
 
 **Description:** Updates simulation mode parameters (e.g. speed factor, artificial time offset).
 
 - **Action Method:** `AdminSimulationController.UpdateAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: Admin`
+- **Authentication:** Bearer JWT Required (Admin)
 - **Request Body (`UpdateParkingSimulationModel`):**
   ```json
   {
@@ -6454,11 +6276,11 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (Admin) or lacks lot assignment scope.
 
 ---
 
@@ -6466,14 +6288,13 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
 
 #### 4.12.1 `GET` /api/notifications
 
-**Description:** Retrieves parking session history for the authenticated customer.
+**Description:** Retrieves in-app notifications for the authenticated user.
 
 - **Action Method:** `NotificationsController.GetMineAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: User`
+- **Authentication:** Bearer JWT Required (User)
 - **Query Parameters:**
-  - `unreadOnly` (bool, default: `false`)
-  - `take` (int, default: `30`)
+  - `unreadOnly` (bool, optional, default: `false`)
+  - `take` (int, optional, default: `30`)
 - **Response Contract:** `ApiResult<NotificationListModel>`
 - **Success Response Example (`200 OK`):**
   ```json
@@ -6499,19 +6320,18 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (User) or lacks lot assignment scope.
 
 #### 4.12.2 `GET` /api/notifications/unread-count
 
 **Description:** Retrieves count of unread notifications for the authenticated user.
 
 - **Action Method:** `NotificationsController.GetUnreadCountAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: User`
+- **Authentication:** Bearer JWT Required (User)
 - **Response Contract:** `ApiResult<NotificationListModel>`
 - **Success Response Example (`200 OK`):**
   ```json
@@ -6537,21 +6357,19 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (User) or lacks lot assignment scope.
 
 #### 4.12.3 `POST` /api/notifications/{id:long}/read
 
 **Description:** Marks a specific notification as read.
 
 - **Action Method:** `NotificationsController.MarkReadAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: User`
+- **Authentication:** Bearer JWT Required (User)
 - **Path Parameters:**
-  - `id` (long, required)
+  - `id` (long, required): Unique identifier for id.
 - **Response Contract:** `ApiResult<NotificationModel>`
 - **Success Response Example (`200 OK`):**
   ```json
@@ -6572,20 +6390,19 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (User) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 #### 4.12.4 `POST` /api/notifications/read-all
 
 **Description:** Marks all notifications for the authenticated user as read.
 
 - **Action Method:** `NotificationsController.MarkAllReadAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: User`
+- **Authentication:** Bearer JWT Required (User)
 - **Response Contract:** `ApiResult<NotificationModel>`
 - **Success Response Example (`200 OK`):**
   ```json
@@ -6606,28 +6423,26 @@ This section documents the 150 Backend HTTP endpoints, organized across 12 funct
     "errors": []
   }
   ```
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `400 Bad Request`: Request validation failure or business constraint violation.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (User) or lacks lot assignment scope.
 
 #### 4.12.5 `DELETE` /api/notifications/{id:long}
 
 **Description:** Deletes an in-app notification.
 
 - **Action Method:** `NotificationsController.DeleteAsync`
-- **Authentication:** Bearer JWT Required
-- **Authorization / Roles:** `Role: User`
+- **Authentication:** Bearer JWT Required (User)
 - **Path Parameters:**
-  - `id` (long, required)
+  - `id` (long, required): Unique identifier for id.
 - **Response Contract:** `ApiResult<object>`
-- **Relevant Status Codes:**
-  - `200 OK` / `201 Created`: Request succeeded.
-  - `400 Bad Request`: Validation failure or business constraint violation.
-  - `401 Unauthorized`: Missing or invalid Bearer token.
-  - `403 Forbidden`: Insufficient role permissions or lot assignment scope.
-  - `404 Not Found`: Target entity not found.
+- **Applicable HTTP Status Codes:**
+  - `200 OK`: Request completed successfully.
+  - `401 Unauthorized`: Missing, expired, or invalid Bearer authentication token.
+  - `403 Forbidden`: User does not hold the required role (User) or lacks lot assignment scope.
+  - `404 Not Found`: Target resource with specified identifier does not exist.
 
 ---
 
