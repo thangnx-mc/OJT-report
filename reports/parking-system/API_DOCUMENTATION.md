@@ -564,7 +564,7 @@ To prevent Insecure Direct Object References (IDOR), service layers enforce stri
 
 ## 4. Typical End-to-End Business Flows
 
-All flows below use the verified sample dataset:
+All flows below use an illustrative sample dataset (values are representative examples for integration demonstration and do not reflect committed database seed records):
 - **Parking Lot:** ID `1` (`"LOT-DIST1-01"`, `"XXIV Central Park Plaza"`)
 - **Bay / Slot:** Code `"A-012"` (ID `1001`, Zone `"ZONE-A"`)
 - **Vehicle:** Plate `"59A-123.45"`, Type `"CAR_4"` (ID `1`), Brand `"Toyota Camry"`
@@ -1162,7 +1162,7 @@ Configured in `ParkingOptions.Wallet`:
 
 To eliminate redundancy across individual endpoint specifications, all shared domain request and response data transfer objects (DTOs) are defined once in this section. Individual endpoint specifications reference these schemas by name.
 
-All examples use the unified sample dataset:
+All examples use an illustrative sample dataset (values are representative examples for integration demonstration and do not reflect committed database seed records):
 - Lot: `1` (`"LOT-DIST1-01"`, `"XXIV Central Park Plaza"`)
 - Bay: `"A-012"` (ID `1001`, Zone `"ZONE-A"`)
 - Vehicle: Plate `"59A-123.45"`, Type `"CAR_4"` (ID `1`), Brand `"Toyota Camry"`
@@ -3860,9 +3860,18 @@ Customer XXIV Stored-Value Wallet balance telemetry.
 - **Summary:** Streams the owner's uploaded file for preview (JPEG, PNG, or PDF).
 - **Authorization:** `[Authorize]`. Ownership checked: Only the vehicle owner can view.
 - **Path Parameters:** `vehicleId` (`string` UUID, required), `documentId` (`string` UUID, required).
-- **Response:** Raw binary file stream with `Content-Type` and header `Cache-Control: private, no-store`.
+- **Response Schema:** Binary File Stream (`FileStreamResult` / `FileResult`)
+  - **Content-Type:** Dynamic MIME type matching uploaded file (`image/jpeg`, `image/png`, or `application/pdf`).
+  - **Headers:**
+    - `Cache-Control: private, no-store`
+    - `Content-Disposition: inline; filename="<originalFileName>"`
+  - **Status Codes:**
+    - `200 OK`: Binary stream of the file content.
+    - `401 Unauthorized`: Missing or invalid JWT bearer token.
+    - `404 Not Found`: Vehicle not owned by caller, document not found, or storage file deleted (`ApiResult<string>` error envelope).
 - **Errors:**
-  - `404 Not Found`: File not found or belongs to another user.
+  - `401 Unauthorized`: Missing or invalid bearer token.
+  - `404 Not Found`: File not found, storage file deleted, or vehicle belongs to another user.
 
 ---
 
@@ -3886,7 +3895,20 @@ Customer XXIV Stored-Value Wallet balance telemetry.
 - **Summary:** Staff preview endpoint to inspect uploaded registration certificates and Citizen ID files.
 - **Authorization:** `[Authorize(Roles = "Staff,Manager,Admin")]`.
 - **Path Parameters:** `verificationId` (`string` UUID, required), `documentId` (`string` UUID, required).
-- **Response:** Raw binary file stream with header `Cache-Control: private, no-store`.
+- **Response Schema:** Binary File Stream (`FileStreamResult` / `FileResult`)
+  - **Content-Type:** Dynamic MIME type matching uploaded file (`image/jpeg`, `image/png`, or `application/pdf`).
+  - **Headers:**
+    - `Cache-Control: private, no-store`
+    - `Content-Disposition: inline; filename="<originalFileName>"`
+  - **Status Codes:**
+    - `200 OK`: Binary stream of the file content.
+    - `401 Unauthorized`: Missing or invalid JWT bearer token.
+    - `403 Forbidden`: Caller lacks `Staff`, `Manager`, or `Admin` role.
+    - `404 Not Found`: Document not found for this verification, or storage file deleted (`ApiResult<string>` error envelope).
+- **Errors:**
+  - `401 Unauthorized`: Missing or invalid bearer token.
+  - `403 Forbidden`: Authenticated user lacks required staff/manager/admin role.
+  - `404 Not Found`: Verification item or file not found in storage.
 
 ---
 
@@ -3996,14 +4018,21 @@ Customer XXIV Stored-Value Wallet balance telemetry.
 #### 8.8.6 `GET /api/payments/vnpay/ipn`
 - **Summary:** Server-to-server IPN webhook invoked by VNPay. Returns raw VNPay status format.
 - **Authorization:** `[AllowAnonymous]`.
-- **Query Parameters:** Standard VNPay IPN parameters.
-- **Response Format:** Direct JSON dictionary:
+- **Query Parameters:** Standard VNPay IPN parameters (`vnp_TxnRef`, `vnp_Amount`, `vnp_ResponseCode`, `vnp_TransactionNo`, `vnp_SecureHash`, etc.).
+- **Response Schema:** Gateway Webhook Direct JSON Object (`Dictionary<string, string>`)
+  - **Content-Type:** `application/json`
+  - **Status Code:** `200 OK` (VNPay requires HTTP 200 for all callback evaluations; outcomes and error states are conveyed via `RspCode`).
+  - **Response Contract (Exact PascalCase keys):**
+    - `RspCode` (`string`): VNPay response code (`"00"` = Confirm Success, `"01"` = Order not found, `"02"` = Order already confirmed, `"04"` = Invalid amount, `"97"` = Invalid signature, `"99"` = Unknown error).
+    - `Message` (`string`): Explanatory status text corresponding to `RspCode`.
+
 ```json
 {
   "RspCode": "00",
   "Message": "Confirm Success"
 }
 ```
+- **Error Behavior:** Any unhandled exception during callback processing is caught and logged, returning HTTP 200 with `{"RspCode": "99", "Message": "Unknown error"}`.
 
 ---
 
@@ -4019,9 +4048,12 @@ Customer XXIV Stored-Value Wallet balance telemetry.
 - **Summary:** Server-to-server IPN webhook invoked by MoMo with JSON body payload.
 - **Authorization:** `[AllowAnonymous]`.
 - **Request Body:** JSON dictionary matching MoMo webhook specifications (`partnerCode`, `orderId`, `requestId`, `amount`, `resultCode`, `signature`, etc.).
-- **Response Status:** **HTTP 204 No Content** on successful processing.
+- **Response Schema:** Empty Body (`204 No Content` / `StatusCodeResult`)
+  - **Content-Type:** None
+  - **Status Code:** `204 No Content` on successful callback verification and payment state transition.
 - **Errors:**
-  - `400 Bad Request`: Invalid cryptographic signature.
+  - `400 Bad Request`: Invalid cryptographic signature (`outcome == "InvalidSignature"`).
+  - `500 Internal Server Error`: Unhandled server or database exception during callback processing.
 
 ---
 
@@ -4951,158 +4983,168 @@ sv, 	kt, exit) signed with HMAC-SHA256 using facility-derived keys, allowing off
 
 ## 13. Maintainer Appendix: Endpoint to Source Location
 
-The following directory maps each of the **150 canonical API endpoints** to its implementing controller class, action method, and source file in src/PMS.API/Controllers/.
+The following directory maps each of the **150 canonical API endpoints** to its implementing controller class, action method, and source file in `src/PMS.API/Controllers/`. Every mapping has been verified against the backend C# source code baseline (`develop` branch, commit `1d148c4`).
 
 | HTTP Method | Route Template | Controller Class | Action Method Name | Source File Location |
 |:---:|:---|:---|:---|:---|
-| $(Post.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Put.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Patch.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Put.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Patch.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Put.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Post.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Post.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Post.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Post.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Post.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Post.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Put.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Put.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Patch.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Delete.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Post.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Put.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Put.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Patch.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Delete.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Post.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Post.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Post.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Post.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Post.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Delete.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Post.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Put.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Patch.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Delete.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Post.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Post.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Post.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Delete.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Post.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Post.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Post.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Post.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Post.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Put.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Post.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Post.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Put.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Patch.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Post.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Post.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Post.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Post.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Post.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Post.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Post.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Post.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Post.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Post.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Patch.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Post.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Post.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Post.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Post.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Post.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Post.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Post.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Post.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Post.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Put.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Post.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Post.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Put.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Delete.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Patch.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Put.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Post.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Post.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Post.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Post.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Post.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Get.ToUpper()) | $cleanPath | $class | $name | $filePath |
-| $(Put.ToUpper()) | $cleanPath | $class | $name | $filePath |
+| `GET` | `/api/Users` | `UsersController` | `GetAllAsync` | `src/PMS.API/Controllers/UsersController.cs` |
+| `GET` | `/api/Users/{id}` | `UsersController` | `GetByIdAsync` | `src/PMS.API/Controllers/UsersController.cs` |
+| `POST` | `/api/Users/internal` | `UsersController` | `CreateInternalUserAsync` | `src/PMS.API/Controllers/UsersController.cs` |
+| `PATCH` | `/api/Users/{id}/status` | `UsersController` | `UpdateStatusAsync` | `src/PMS.API/Controllers/UsersController.cs` |
+| `POST` | `/api/Users/register` | `UsersController` | `RegisterAsync` | `src/PMS.API/Controllers/UsersController.cs` |
+| `POST` | `/api/Users/authenticate` | `UsersController` | `LoginAsync` | `src/PMS.API/Controllers/UsersController.cs` |
+| `POST` | `/api/Users/two-factor` | `UsersController` | `VerifyTwoFactorAsync` | `src/PMS.API/Controllers/UsersController.cs` |
+| `POST` | `/api/Users/two-factor/resend` | `UsersController` | `ResendTwoFactorOtpAsync` | `src/PMS.API/Controllers/UsersController.cs` |
+| `POST` | `/api/Users/login-otp/request` | `UsersController` | `RequestLoginOtpAsync` | `src/PMS.API/Controllers/UsersController.cs` |
+| `POST` | `/api/Users/login-otp/verify` | `UsersController` | `LoginWithOtpAsync` | `src/PMS.API/Controllers/UsersController.cs` |
+| `POST` | `/api/Users/forgot-password` | `UsersController` | `ForgotPasswordAsync` | `src/PMS.API/Controllers/UsersController.cs` |
+| `POST` | `/api/Users/reset-password` | `UsersController` | `ResetPasswordAsync` | `src/PMS.API/Controllers/UsersController.cs` |
+| `POST` | `/api/Users/login-google` | `UsersController` | `LoginWithGoogleAsync` | `src/PMS.API/Controllers/UsersController.cs` |
+| `GET` | `/api/Users/profile` | `UsersController` | `GetProfileAsync` | `src/PMS.API/Controllers/UsersController.cs` |
+| `PUT` | `/api/Users/profile` | `UsersController` | `UpdateProfileAsync` | `src/PMS.API/Controllers/UsersController.cs` |
+| `GET` | `/api/Users/profile/check-unique` | `UsersController` | `CheckProfileUniquenessAsync` | `src/PMS.API/Controllers/UsersController.cs` |
+| `POST` | `/api/Users/profile/avatar` | `UsersController` | `UploadAvatarAsync` | `src/PMS.API/Controllers/UsersController.cs` |
+| `GET` | `/api/Users/profile/vehicles` | `UsersController` | `GetVehiclesAsync` | `src/PMS.API/Controllers/UsersController.cs` |
+| `GET` | `/api/Users/profile/vehicles/check-plate` | `UsersController` | `CheckPlateAvailabilityAsync` | `src/PMS.API/Controllers/UsersController.cs` |
+| `POST` | `/api/Users/profile/vehicles` | `UsersController` | `AddVehicleAsync` | `src/PMS.API/Controllers/UsersController.cs` |
+| `PUT` | `/api/Users/profile/vehicles/{vehicleId}` | `UsersController` | `UpdateVehicleAsync` | `src/PMS.API/Controllers/UsersController.cs` |
+| `DELETE` | `/api/Users/profile/vehicles/{vehicleId}` | `UsersController` | `DeleteVehicleAsync` | `src/PMS.API/Controllers/UsersController.cs` |
+| `PATCH` | `/api/Users/profile/vehicles/{vehicleId}/default` | `UsersController` | `SetDefaultVehicleAsync` | `src/PMS.API/Controllers/UsersController.cs` |
+| `GET` | `/api/Users/profile/vehicle-types` | `UsersController` | `GetVehicleTypesAsync` | `src/PMS.API/Controllers/UsersController.cs` |
+| `PUT` | `/api/Users/profile/change-password` | `UsersController` | `ChangePasswordAsync` | `src/PMS.API/Controllers/UsersController.cs` |
+| `GET` | `/api/Users/{id}/profile` | `UsersController` | `GetProfileByUserIdAsync` | `src/PMS.API/Controllers/UsersController.cs` |
+| `GET` | `/api/lots` | `LotsController` | `GetAllAsync` | `src/PMS.API/Controllers/LotsController.cs` |
+| `GET` | `/api/public/lots` | `LotsController` | `GetPublicLotsAsync` | `src/PMS.API/Controllers/LotsController.cs` |
+| `GET` | `/api/public/lots/{id}/prices` | `LotsController` | `GetPublicPricesAsync` | `src/PMS.API/Controllers/LotsController.cs` |
+| `GET` | `/api/lots/{id}` | `LotsController` | `GetByIdAsync` | `src/PMS.API/Controllers/LotsController.cs` |
+| `POST` | `/api/lots` | `LotsController` | `CreateAsync` | `src/PMS.API/Controllers/LotsController.cs` |
+| `PUT` | `/api/lots/{id}` | `LotsController` | `UpdateAsync` | `src/PMS.API/Controllers/LotsController.cs` |
+| `PUT` | `/api/lots/{id}/template` | `LotsController` | `ApplyTemplateAsync` | `src/PMS.API/Controllers/LotsController.cs` |
+| `PATCH` | `/api/lots/{id}/status` | `LotsController` | `UpdateStatusAsync` | `src/PMS.API/Controllers/LotsController.cs` |
+| `DELETE` | `/api/lots/{id}` | `LotsController` | `DeleteAsync` | `src/PMS.API/Controllers/LotsController.cs` |
+| `GET` | `/api/lot-templates` | `LayoutsController` | `GetTemplates` | `src/PMS.API/Controllers/LayoutsController.cs` |
+| `GET` | `/api/public/lots/{lotId}/layout` | `LayoutsController` | `GetPublishedAsync` | `src/PMS.API/Controllers/LayoutsController.cs` |
+| `GET` | `/api/public/lots/{lotId}/layout/status` | `LayoutsController` | `GetStatusAsync` | `src/PMS.API/Controllers/LayoutsController.cs` |
+| `GET` | `/api/public/lots/{lotId}/layout/2d` | `LayoutsController` | `Get2DAsync` | `src/PMS.API/Controllers/LayoutsController.cs` |
+| `GET` | `/api/zones` | `ZonesController` | `GetAllAsync` | `src/PMS.API/Controllers/ZonesController.cs` |
+| `GET` | `/api/lots/{lotId}/zones` | `ZonesController` | `GetByLotIdAsync` | `src/PMS.API/Controllers/ZonesController.cs` |
+| `GET` | `/api/zones/{id}` | `ZonesController` | `GetByIdAsync` | `src/PMS.API/Controllers/ZonesController.cs` |
+| `PUT` | `/api/zones/{id}` | `ZonesController` | `UpdateAsync` | `src/PMS.API/Controllers/ZonesController.cs` |
+| `GET` | `/api/slots` | `SlotsController` | `GetAllAsync` | `src/PMS.API/Controllers/SlotsController.cs` |
+| `GET` | `/api/zones/{zoneId}/slots` | `SlotsController` | `GetByZoneIdAsync` | `src/PMS.API/Controllers/SlotsController.cs` |
+| `GET` | `/api/slots/{id}` | `SlotsController` | `GetByIdAsync` | `src/PMS.API/Controllers/SlotsController.cs` |
+| `PUT` | `/api/slots/{id}` | `SlotsController` | `UpdateAsync` | `src/PMS.API/Controllers/SlotsController.cs` |
+| `PATCH` | `/api/slots/{id}/status` | `SlotsController` | `UpdateStatusAsync` | `src/PMS.API/Controllers/SlotsController.cs` |
+| `POST` | `/api/reservations` | `ReservationsController` | `CreateAsync` | `src/PMS.API/Controllers/ReservationsController.cs` |
+| `GET` | `/api/reservations/mine` | `ReservationsController` | `GetMineAsync` | `src/PMS.API/Controllers/ReservationsController.cs` |
+| `GET` | `/api/reservations/upcoming` | `ReservationsController` | `GetUpcomingAsync` | `src/PMS.API/Controllers/ReservationsController.cs` |
+| `GET` | `/api/reservations/{id}` | `ReservationsController` | `GetAsync` | `src/PMS.API/Controllers/ReservationsController.cs` |
+| `PUT` | `/api/reservations/{id}` | `ReservationsController` | `UpdateAsync` | `src/PMS.API/Controllers/ReservationsController.cs` |
+| `POST` | `/api/reservations/{id}/cancel` | `ReservationsController` | `CancelAsync` | `src/PMS.API/Controllers/ReservationsController.cs` |
+| `GET` | `/api/reservations/{id}/qr` | `ReservationsController` | `GetQrAsync` | `src/PMS.API/Controllers/ReservationsController.cs` |
+| `POST` | `/api/reservations/{id}/payments` | `ReservationsController` | `PayDepositAsync` | `src/PMS.API/Controllers/ReservationsController.cs` |
+| `GET` | `/api/parking-sessions/mine` | `ParkingSessionsController` | `GetMineAsync` | `src/PMS.API/Controllers/ParkingSessionsController.cs` |
+| `GET` | `/api/parking-sessions/history` | `ParkingSessionsController` | `GetHistoryAsync` | `src/PMS.API/Controllers/ParkingSessionsController.cs` |
+| `GET` | `/api/parking-sessions/{id}/receipt` | `ParkingSessionsController` | `GetReceiptAsync` | `src/PMS.API/Controllers/ParkingSessionsController.cs` |
+| `GET` | `/api/parking-sessions/current` | `ParkingSessionsController` | `GetCurrentAsync` | `src/PMS.API/Controllers/ParkingSessionsController.cs` |
+| `GET` | `/api/parking-sessions/{id}/exit-pass` | `ParkingSessionsController` | `GetExitPassAsync` | `src/PMS.API/Controllers/ParkingSessionsController.cs` |
+| `GET` | `/api/parking-sessions/{id}/quote` | `ParkingSessionsController` | `QuoteAsync` | `src/PMS.API/Controllers/ParkingSessionsController.cs` |
+| `POST` | `/api/parking-sessions/{id}/payments` | `ParkingSessionsController` | `PayAsync` | `src/PMS.API/Controllers/ParkingSessionsController.cs` |
+| `POST` | `/api/reservations/{reservationId}/check-in-request` | `GateRequestsController` | `RequestCheckInAsync` | `src/PMS.API/Controllers/GateRequestsController.cs` |
+| `POST` | `/api/parking-sessions/{sessionId}/check-out-request` | `GateRequestsController` | `RequestCheckOutAsync` | `src/PMS.API/Controllers/GateRequestsController.cs` |
+| `GET` | `/api/gate-requests/mine` | `GateRequestsController` | `GetMineAsync` | `src/PMS.API/Controllers/GateRequestsController.cs` |
+| `POST` | `/api/gate-requests/{requestId}/cancel` | `GateRequestsController` | `CancelAsync` | `src/PMS.API/Controllers/GateRequestsController.cs` |
+| `GET` | `/api/staff/lots/{lotId}/gate-requests` | `GateRequestsController` | `GetQueueAsync` | `src/PMS.API/Controllers/GateRequestsController.cs` |
+| `POST` | `/api/staff/gate-requests/{requestId}/approve` | `GateRequestsController` | `ApproveAsync` | `src/PMS.API/Controllers/GateRequestsController.cs` |
+| `POST` | `/api/staff/gate-requests/{requestId}/refuse` | `GateRequestsController` | `RefuseAsync` | `src/PMS.API/Controllers/GateRequestsController.cs` |
+| `GET` | `/api/staff/lots` | `StaffController` | `GetLotsAsync` | `src/PMS.API/Controllers/StaffController.cs` |
+| `GET` | `/api/staff/lots/{lotId}/gates` | `StaffGateController` | `GetGatesAsync` | `src/PMS.API/Controllers/StaffGateController.cs` |
+| `GET` | `/api/staff/lots/{lotId}/zone-counters` | `StaffGateController` | `GetZoneCountersAsync` | `src/PMS.API/Controllers/StaffGateController.cs` |
+| `GET` | `/api/staff/lots/{lotId}/sessions` | `StaffGateController` | `GetSessionsAsync` | `src/PMS.API/Controllers/StaffGateController.cs` |
+| `GET` | `/api/staff/lots/{lotId}/sessions/history` | `StaffGateController` | `GetHistoryAsync` | `src/PMS.API/Controllers/StaffGateController.cs` |
+| `GET` | `/api/staff/lots/{lotId}/payments` | `StaffGateController` | `GetPaymentHistoryAsync` | `src/PMS.API/Controllers/StaffGateController.cs` |
+| `GET` | `/api/staff/lots/{lotId}/sessions/lookup` | `StaffGateController` | `LookupAsync` | `src/PMS.API/Controllers/StaffGateController.cs` |
+| `GET` | `/api/staff/lots/{lotId}/reservations` | `StaffGateController` | `GetReservationsAsync` | `src/PMS.API/Controllers/StaffGateController.cs` |
+| `GET` | `/api/staff/lots/{lotId}/reservations/lookup` | `StaffGateController` | `LookupReservationAsync` | `src/PMS.API/Controllers/StaffGateController.cs` |
+| `GET` | `/api/staff/lots/{lotId}/plate-lists` | `StaffGateController` | `GetPlateListsAsync` | `src/PMS.API/Controllers/StaffGateController.cs` |
+| `POST` | `/api/staff/lots/{lotId}/check-in` | `StaffGateController` | `CheckInAsync` | `src/PMS.API/Controllers/StaffGateController.cs` |
+| `GET` | `/api/staff/sessions/{id}` | `StaffGateController` | `GetSessionAsync` | `src/PMS.API/Controllers/StaffGateController.cs` |
+| `POST` | `/api/staff/sessions/{id}/entry-confirm` | `StaffGateController` | `ConfirmEntryAsync` | `src/PMS.API/Controllers/StaffGateController.cs` |
+| `POST` | `/api/staff/sessions/{id}/entry-cancel` | `StaffGateController` | `CancelEntryAsync` | `src/PMS.API/Controllers/StaffGateController.cs` |
+| `POST` | `/api/staff/sessions/{id}/quote` | `StaffGateController` | `QuoteAsync` | `src/PMS.API/Controllers/StaffGateController.cs` |
+| `POST` | `/api/staff/sessions/{id}/cancel-payment` | `StaffGateController` | `CancelPaymentAsync` | `src/PMS.API/Controllers/StaffGateController.cs` |
+| `POST` | `/api/staff/sessions/{id}/payments/cash` | `StaffGateController` | `PayCashAsync` | `src/PMS.API/Controllers/StaffGateController.cs` |
+| `POST` | `/api/staff/sessions/{id}/payments/online` | `StaffGateController` | `PayOnlineAsync` | `src/PMS.API/Controllers/StaffGateController.cs` |
+| `POST` | `/api/staff/sessions/{id}/check-out` | `StaffGateController` | `CheckoutAsync` | `src/PMS.API/Controllers/StaffGateController.cs` |
+| `POST` | `/api/staff/sessions/{id}/lost-ticket` | `StaffGateController` | `LostTicketAsync` | `src/PMS.API/Controllers/StaffGateController.cs` |
+| `GET` | `/api/manager/lots` | `ManagerController` | `GetLotsAsync` | `src/PMS.API/Controllers/ManagerController.cs` |
+| `GET` | `/api/manager/staff` | `ManagerController` | `GetStaffAsync` | `src/PMS.API/Controllers/ManagerController.cs` |
+| `GET` | `/api/manager/staff/{id}` | `ManagerController` | `GetStaffByIdAsync` | `src/PMS.API/Controllers/ManagerController.cs` |
+| `POST` | `/api/manager/staff` | `ManagerController` | `CreateStaffAsync` | `src/PMS.API/Controllers/ManagerController.cs` |
+| `PUT` | `/api/manager/staff/{id}` | `ManagerController` | `UpdateStaffAsync` | `src/PMS.API/Controllers/ManagerController.cs` |
+| `PUT` | `/api/manager/staff/{id}/lot` | `ManagerController` | `AssignStaffLotAsync` | `src/PMS.API/Controllers/ManagerController.cs` |
+| `PATCH` | `/api/manager/staff/{id}/status` | `ManagerController` | `UpdateStaffStatusAsync` | `src/PMS.API/Controllers/ManagerController.cs` |
+| `DELETE` | `/api/manager/staff/{id}` | `ManagerController` | `DeleteStaffAsync` | `src/PMS.API/Controllers/ManagerController.cs` |
+| `GET` | `/api/manager/lots/{lotId}/reservations` | `ManagerOperationsController` | `GetReservationsAsync` | `src/PMS.API/Controllers/ManagerOperationsController.cs` |
+| `POST` | `/api/manager/reservations/{id}/cancel` | `ManagerOperationsController` | `CancelReservationAsync` | `src/PMS.API/Controllers/ManagerOperationsController.cs` |
+| `POST` | `/api/manager/sessions/{id}/abnormal-close` | `ManagerOperationsController` | `CloseAbnormallyAsync` | `src/PMS.API/Controllers/ManagerOperationsController.cs` |
+| `POST` | `/api/manager/sessions/{id}/lost-ticket/approve` | `ManagerOperationsController` | `ApproveLostTicketAsync` | `src/PMS.API/Controllers/ManagerOperationsController.cs` |
+| `POST` | `/api/manager/sessions/{id}/lost-ticket/reject` | `ManagerOperationsController` | `RejectLostTicketAsync` | `src/PMS.API/Controllers/ManagerOperationsController.cs` |
+| `GET` | `/api/manager/lots/{lotId}/plate-lists` | `ManagerOperationsController` | `GetPlateListsAsync` | `src/PMS.API/Controllers/ManagerOperationsController.cs` |
+| `POST` | `/api/manager/lots/{lotId}/plate-lists` | `ManagerOperationsController` | `AddPlateListEntryAsync` | `src/PMS.API/Controllers/ManagerOperationsController.cs` |
+| `DELETE` | `/api/manager/lots/{lotId}/plate-lists/{id}` | `ManagerOperationsController` | `RemovePlateListEntryAsync` | `src/PMS.API/Controllers/ManagerOperationsController.cs` |
+| `GET` | `/api/manager/lots/{lotId}/pricing-rules` | `ManagerPricingController` | `GetPricingRulesAsync` | `src/PMS.API/Controllers/ManagerPricingController.cs` |
+| `GET` | `/api/manager/lots/{lotId}/pricing-rules/{id}` | `ManagerPricingController` | `GetPricingRuleByIdAsync` | `src/PMS.API/Controllers/ManagerPricingController.cs` |
+| `POST` | `/api/manager/lots/{lotId}/pricing-rules` | `ManagerPricingController` | `CreatePricingRuleAsync` | `src/PMS.API/Controllers/ManagerPricingController.cs` |
+| `PUT` | `/api/manager/lots/{lotId}/pricing-rules/{id}` | `ManagerPricingController` | `UpdatePricingRuleAsync` | `src/PMS.API/Controllers/ManagerPricingController.cs` |
+| `PATCH` | `/api/manager/lots/{lotId}/pricing-rules/{id}/status` | `ManagerPricingController` | `SetPricingRuleStatusAsync` | `src/PMS.API/Controllers/ManagerPricingController.cs` |
+| `DELETE` | `/api/manager/lots/{lotId}/pricing-rules/{id}` | `ManagerPricingController` | `DeletePricingRuleAsync` | `src/PMS.API/Controllers/ManagerPricingController.cs` |
+| `POST` | `/api/manager/lots/{lotId}/pricing-rules/simulate` | `ManagerPricingController` | `SimulatePricingAsync` | `src/PMS.API/Controllers/ManagerPricingController.cs` |
+| `GET` | `/api/users/profile/rejected-vehicles` | `VehicleDocumentsController` | `GetRecentlyRejectedAsync` | `src/PMS.API/Controllers/VehicleDocumentsController.cs` |
+| `GET` | `/api/users/profile/vehicles/{vehicleId}/documents` | `VehicleDocumentsController` | `GetLatestAsync` | `src/PMS.API/Controllers/VehicleDocumentsController.cs` |
+| `POST` | `/api/users/profile/vehicles/{vehicleId}/documents/{documentType}/{side}` | `VehicleDocumentsController` | `UploadAsync` | `src/PMS.API/Controllers/VehicleDocumentsController.cs` |
+| `POST` | `/api/users/profile/vehicles/{vehicleId}/documents/submit` | `VehicleDocumentsController` | `SubmitAsync` | `src/PMS.API/Controllers/VehicleDocumentsController.cs` |
+| `GET` | `/api/users/profile/vehicles/{vehicleId}/documents/files/{documentId}` | `VehicleDocumentsController` | `GetFileAsync` | `src/PMS.API/Controllers/VehicleDocumentsController.cs` |
+| `GET` | `/api/vehicle-verifications` | `VehicleVerificationsController` | `GetQueueAsync` | `src/PMS.API/Controllers/VehicleVerificationsController.cs` |
+| `GET` | `/api/vehicle-verifications/{verificationId}` | `VehicleVerificationsController` | `GetAsync` | `src/PMS.API/Controllers/VehicleVerificationsController.cs` |
+| `GET` | `/api/vehicle-verifications/{verificationId}/files/{documentId}` | `VehicleVerificationsController` | `GetFileAsync` | `src/PMS.API/Controllers/VehicleVerificationsController.cs` |
+| `POST` | `/api/vehicle-verifications/{verificationId}/review` | `VehicleVerificationsController` | `ReviewAsync` | `src/PMS.API/Controllers/VehicleVerificationsController.cs` |
+| `GET` | `/api/payments/{id}` | `PaymentsController` | `GetAsync` | `src/PMS.API/Controllers/PaymentsController.cs` |
+| `POST` | `/api/payments/{id}/check` | `PaymentsController` | `CheckAsync` | `src/PMS.API/Controllers/PaymentsController.cs` |
+| `GET` | `/api/payments/simulation` | `PaymentsController` | `GetSimulation` | `src/PMS.API/Controllers/PaymentsController.cs` |
+| `POST` | `/api/payments/{id}/simulate-success` | `PaymentsController` | `SimulateSuccessAsync` | `src/PMS.API/Controllers/PaymentsController.cs` |
+| `GET` | `/api/payments/vnpay/return` | `PaymentsController` | `VnPayReturnAsync` | `src/PMS.API/Controllers/PaymentsController.cs` |
+| `GET` | `/api/payments/vnpay/ipn` | `PaymentsController` | `VnPayIpnAsync` | `src/PMS.API/Controllers/PaymentsController.cs` |
+| `GET` | `/api/payments/momo/return` | `PaymentsController` | `MoMoReturnAsync` | `src/PMS.API/Controllers/PaymentsController.cs` |
+| `POST` | `/api/payments/momo/ipn` | `PaymentsController` | `MoMoIpnAsync` | `src/PMS.API/Controllers/PaymentsController.cs` |
+| `GET` | `/api/wallet` | `WalletController` | `GetAsync` | `src/PMS.API/Controllers/WalletController.cs` |
+| `POST` | `/api/wallet/topup` | `WalletController` | `TopUpAsync` | `src/PMS.API/Controllers/WalletController.cs` |
+| `POST` | `/api/wallet/withdraw` | `WalletController` | `WithdrawAsync` | `src/PMS.API/Controllers/WalletController.cs` |
+| `GET` | `/api/manager/reports/revenue` | `ManagerRevenueController` | `GetRevenueAsync` | `src/PMS.API/Controllers/ManagerRevenueController.cs` |
+| `GET` | `/api/admin/reports/revenue` | `AdminRevenueController` | `GetRevenueAsync` | `src/PMS.API/Controllers/AdminRevenueController.cs` |
+| `POST` | `/api/admin/managers` | `AdminController` | `CreateManagerAsync` | `src/PMS.API/Controllers/AdminController.cs` |
+| `GET` | `/api/admin/managers` | `AdminController` | `GetManagersAsync` | `src/PMS.API/Controllers/AdminController.cs` |
+| `GET` | `/api/admin/managers/{id}` | `AdminController` | `GetManagerAsync` | `src/PMS.API/Controllers/AdminController.cs` |
+| `PUT` | `/api/admin/managers/{id}` | `AdminController` | `UpdateManagerAsync` | `src/PMS.API/Controllers/AdminController.cs` |
+| `PATCH` | `/api/admin/managers/{id}/status` | `AdminController` | `UpdateManagerStatusAsync` | `src/PMS.API/Controllers/AdminController.cs` |
+| `PUT` | `/api/admin/managers/{id}/lots` | `AdminController` | `AssignManagerLotsAsync` | `src/PMS.API/Controllers/AdminController.cs` |
+| `GET` | `/api/admin/users` | `AdminController` | `GetInternalUsersAsync` | `src/PMS.API/Controllers/AdminController.cs` |
+| `PATCH` | `/api/admin/users/{id}/status` | `AdminController` | `UpdateStatusAsync` | `src/PMS.API/Controllers/AdminController.cs` |
+| `GET` | `/api/admin/simulation` | `AdminSimulationController` | `GetAsync` | `src/PMS.API/Controllers/AdminSimulationController.cs` |
+| `PUT` | `/api/admin/simulation` | `AdminSimulationController` | `UpdateAsync` | `src/PMS.API/Controllers/AdminSimulationController.cs` |
+| `GET` | `/api/notifications` | `NotificationsController` | `GetMineAsync` | `src/PMS.API/Controllers/NotificationsController.cs` |
+| `GET` | `/api/notifications/unread-count` | `NotificationsController` | `GetUnreadCountAsync` | `src/PMS.API/Controllers/NotificationsController.cs` |
+| `POST` | `/api/notifications/{id}/read` | `NotificationsController` | `MarkReadAsync` | `src/PMS.API/Controllers/NotificationsController.cs` |
+| `POST` | `/api/notifications/read-all` | `NotificationsController` | `MarkAllReadAsync` | `src/PMS.API/Controllers/NotificationsController.cs` |
+| `DELETE` | `/api/notifications/{id}` | `NotificationsController` | `DeleteAsync` | `src/PMS.API/Controllers/NotificationsController.cs` |
+
+### Secondary Method-Level Route Aliases
+
+| HTTP Method | Alias Route | Canonical Route | Controller Class | Action Method Name | Source File Location |
+|:---:|:---|:---|:---|:---|:---|
+| `GET` | `/api/public/parking-lots` | `/api/lots` | `LotsController` | `GetPublicLotsAsync` | `src/PMS.API/Controllers/LotsController.cs` |
+| `GET` | `/api/parking-lots/{lotId}/zones` | `/api/zones?lotId={lotId}` | `ZonesController` | `GetByLotIdAsync` | `src/PMS.API/Controllers/ZonesController.cs` |
+
+> [!NOTE]
+> Class-level route prefix alias: `LotsController` defines `[Route("api/lots")]` alongside `[Route("api/parking-lots")]`. Under ASP.NET Core routing, all endpoints on `LotsController` are accessible using either the canonical `/api/lots` prefix or the `/api/parking-lots` alias.
 
