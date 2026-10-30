@@ -1,7 +1,7 @@
 # XXIV Parking Management System — Backend API Open Questions & Architectural Backlog
 
 > **Document Target:** Backend Engineering Team, Tech Lead, Product Owner  
-> **Source Baseline:** `c:\DEV\OJT-FSA-Team3\parking-management-system` (.NET 9 Web API)  
+> **Source Baseline:** `PMS solution workspace (parking-management-system)` (.NET 9 Web API)  
 > **Output Date:** 2026-10-30  
 > **Status:** Open for Architecture Review  
 > **Classification:** Technical Discovery & Specification Clarification  
@@ -153,4 +153,4 @@ This document compiles all **10 high-priority open questions**, **domain inconsi
 ---
 
 *This concludes the Open Questions and Architectural Audit report.*  
-*Deliverable maintained under `C:\DEV\OJT-report\reports\parking-system\open-questions.md`.*
+*Deliverable maintained under `reports/parking-system\open-questions.md`.*

@@ -1,7 +1,7 @@
 # XXIV Parking Management System — API Documentation Change Log & Audit Trail
 
-> **Target Document:** `C:\DEV\OJT-report\reports\parking-system\API_DOCUMENTATION.md`  
-> **Source Code Baseline:** `c:\DEV\OJT-FSA-Team3\parking-management-system` (`PMS.API`, `PMS.Application`, `PMS.Core`, `PMS.DataAccess`)  
+> **Target Document:** `reports/parking-system\API_DOCUMENTATION.md`  
+> **Source Code Baseline:** `PMS solution workspace (parking-management-system)` (`PMS.API`, `PMS.Application`, `PMS.Core`, `PMS.DataAccess`)  
 > **Audit Date:** 2026-10-30  
 > **Author:** Senior Technical Writer + Backend Lead  
 > **Status:** Verified Against Source Code Baseline  

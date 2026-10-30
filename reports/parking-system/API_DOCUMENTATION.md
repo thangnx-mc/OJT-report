@@ -1,4 +1,4 @@
-﻿# XXIV Parking Management System (PMS) â€” Backend API Documentation
+# XXIV Parking Management System (PMS) — Backend API Documentation
 
 ---
 
@@ -14,7 +14,7 @@
   - [2.1 Route Casing and Formatting](#21-route-casing-and-formatting)
   - [2.2 Content Types & Encodings](#22-content-types--encodings)
   - [2.3 Standard Request Headers](#23-standard-request-headers)
-  - [2.4 Response Envelope (ApiResult<T>)](#24-response-envelope-apiresultt)
+  - [2.4 Response Envelope (ApiResult)](#24-response-envelope-apiresult)
   - [2.5 Standard Error Examples by HTTP Status Code](#25-standard-error-examples-by-http-status-code)
   - [2.6 Pagination Contracts](#26-pagination-contracts)
   - [2.7 Date, Time, and Monetary Formatting](#27-date-time-and-monetary-formatting)
@@ -53,7 +53,7 @@
   - [7.7 Payment & Customer Wallet Schemas](#77-payment--customer-wallet-schemas)
 - [8. API Reference](#8-api-reference)
   - [8.1 Module 01: Authentication & User Accounts (26 Endpoints)](#81-module-01-authentication--user-accounts-26-endpoints)
-  - [8.2 Module 02: Parking Lots, Layouts, Zones & Slots (23 Endpoints + Aliases)](#82-module-02-parking-lots-layouts-zones--slots-23-endpoints--aliases)
+  - [8.2 Module 02: Parking Lots, Layouts, Zones & Slots (22 Endpoints + Aliases)](#82-module-02-parking-lots-layouts-zones--slots-22-endpoints--aliases)
   - [8.3 Module 03: Customer Reservations (8 Endpoints)](#83-module-03-customer-reservations-8-endpoints)
   - [8.4 Module 04: Customer Parking Sessions (7 Endpoints)](#84-module-04-customer-parking-sessions-7-endpoints)
   - [8.5 Module 05: Staff Gate Operations & Gate Requests (27 Endpoints)](#85-module-05-staff-gate-operations--gate-requests-27-endpoints)
@@ -145,11 +145,11 @@ The backend is structured according to Clean Architecture / N-Tier principles:
 | `Accept` | Optional | Expected response MIME type. Default is `application/json`. | `application/json` |
 | `X-Forwarded-For` | Optional | Forwarded client IP address used by payment callbacks and rate limiters. | `203.0.113.195` |
 
-### 2.4 Response Envelope (`ApiResult<T>`)
+### 2.4 Response Envelope (ApiResult)
 Every standard REST endpoint wraps its response payload inside the uniform `ApiResult<T>` envelope (`PMS.Application.Models.ApiResult<T>`).
 
 #### Success Response Structure (HTTP 200 OK / 201 Created)
-```json
+```jsonc
 {
   "succeeded": true,
   "result": { ... },
@@ -298,7 +298,7 @@ Endpoints: `GET /api/parking-sessions/history`
   - `to` (`string` ISO 8601 UTC, optional): Filter sessions with exit time before this timestamp.
   - `vehicleId` (`string` UUID, optional): Filter sessions for a specific vehicle.
 - **Response Structure:**
-```json
+```jsonc
 {
   "items": [ ... ],
   "page": 1,
@@ -315,7 +315,7 @@ Endpoints: `GET /api/staff/lots/{lotId}/sessions/history`, `GET /api/staff/lots/
   - `pageSize` (`integer`, optional, default `10`, range `1..50`): Rows per page.
   - Additional query filters: `plate`, `method`.
 - **Response Structure:**
-```json
+```jsonc
 {
   "items": [ ... ],
   "page": 1,
@@ -330,7 +330,7 @@ Endpoint: `GET /api/notifications`
   - `unreadOnly` (`boolean`, optional, default `false`): Filter unread notifications only.
   - `take` (`integer`, optional, default `30`, max `100`): Maximum items to return.
 - **Response Structure:**
-```json
+```jsonc
 {
   "items": [ ... ],
   "unreadCount": 3
@@ -489,38 +489,38 @@ The table below is rebuilt from the source code `[Authorize]` and `[AllowAnonymo
 
 | Functional Area / Resource | Public (Anon) | Customer (`User`) | Gate Staff (`Staff`) | Facility Manager (`Manager`) | System Admin (`Admin`) | Controller Implementation Reference |
 |:---|:---:|:---:|:---:|:---:|:---:|:---|
-| **Public Lots & Prices** | **âœ“** | **âœ“** | **âœ“** | **âœ“** | **âœ“** | `LotsController.GetPublicLotsAsync`, `GetPublicPricesAsync` |
-| **Public 3D / 2D Layout & Status** | **âœ“** | **âœ“** | **âœ“** | **âœ“** | **âœ“** | `LayoutsController` (`/layout`, `/status`, `/2d`, `/lot-templates`) |
-| **User Registration & Login (Password, OTP, Google)** | **âœ“** | â€” | â€” | â€” | â€” | `UsersController` (`register`, `authenticate`, `login-otp`, `login-google`) |
-| **2FA Verification & Resend** | **âœ“** | â€” | â€” | â€” | â€” | `UsersController` (`two-factor`, `two-factor/resend`) |
-| **Password Reset (Forgot/Reset)** | **âœ“** | â€” | â€” | â€” | â€” | `UsersController` (`forgot-password`, `reset-password`) |
-| **Customer Profile & Password Change** | âœ— | **âœ“** | **âœ“** | **âœ“** | **âœ“** | `UsersController` (`/profile`, `/change-password`, `/check-unique`) |
-| **Customer Avatar Upload** | âœ— | **âœ“** | **âœ“** | **âœ“** | **âœ“** | `UsersController.UploadAvatarAsync` (`/profile/avatar`) |
-| **Customer Vehicles (CRUD & Default)** | âœ— | **âœ“** | **âœ“** | **âœ“** | **âœ“** | `UsersController` (`/profile/vehicles`, `/check-plate`, `/default`) |
-| **Vehicle KYC Documents (Upload & Submit)** | âœ— | **âœ“** | âœ— | âœ— | âœ— | `VehicleDocumentsController` (Owner only) |
-| **Customer Wallet (Balance, Top-Up, Withdraw)** | âœ— | **âœ“** | âœ— | âœ— | âœ— | `WalletController` (`/api/wallet`, `/topup`, `/withdraw`) |
-| **Customer Slot Reservations (Create, View, Cancel)** | âœ— | **âœ“** | âœ— | âœ— | âœ— | `ReservationsController` |
-| **Customer Parking Sessions (Current, History, Quote)** | âœ— | **âœ“** | âœ— | âœ— | âœ— | `ParkingSessionsController` |
-| **Customer Gate Requests (CheckIn, CheckOut, Mine)** | âœ— | **âœ“** | âœ— | âœ— | âœ— | `GateRequestsController` (`mine`, `check-in-request`, `check-out-request`) |
-| **Customer Notifications (Bell, Mark Read, Delete)** | âœ— | **âœ“** | âœ— | âœ— | âœ— | `NotificationsController` |
-| **Payment Gateway Callbacks (VNPay/MoMo Return & IPN)** | **âœ“** | **âœ“** | **âœ“** | **âœ“** | **âœ“** | `PaymentsController` (`vnpay/return`, `vnpay/ipn`, `momo/return`, `momo/ipn`) |
-| **Payment Status Check & Simulation** | âœ— | **âœ“** | **âœ“** | **âœ“** | **âœ“** | `PaymentsController` (`{id}`, `{id}/check`, `{id}/simulate-success`) |
-| **Vehicle Verification Queue & Review** | âœ— | âœ— | **âœ“** | **âœ“** | **âœ“** | `VehicleVerificationsController` |
-| **Staff Assigned Lots** | âœ— | âœ— | **âœ“** | âœ— | âœ— | `StaffController.GetLotsAsync` |
-| **Gate Operations (Check-in, Confirm, Checkout, Quote)** | âœ— | âœ— | **âœ“** | **âœ“** | **âœ“** | `StaffGateController` (Subject to lot-scope) |
-| **Staff Gate Requests Queue (Approve/Refuse)** | âœ— | âœ— | **âœ“** | **âœ“** | **âœ“** | `GateRequestsController` (Subject to lot-scope) |
-| **Manager Assigned Lots & Staff Management** | âœ— | âœ— | âœ— | **âœ“** | âœ— | `ManagerController` |
-| **Manager Operations (Abnormal Close, Lost Ticket Decision)** | âœ— | âœ— | âœ— | **âœ“** | **âœ“** | `ManagerOperationsController` (Subject to lot-scope) |
-| **Manager Whitelist / Blacklist (Add, Remove)** | âœ— | âœ— | âœ— | **âœ“** | **âœ“** | `ManagerOperationsController` (Subject to lot-scope) |
-| **Manager Pricing Rules (CRUD & Simulation)** | âœ— | âœ— | âœ— | **âœ“** | **âœ“** | `ManagerPricingController` (Subject to lot-scope) |
-| **Manager Revenue Reports** | âœ— | âœ— | âœ— | **âœ“** | âœ— | `ManagerRevenueController` (Scoped to managed lots) |
-| **Lot Configuration (Create, Update, Template, Delete)** | âœ— | âœ— | âœ— | âœ— | **âœ“** | `LotsController` (`POST`, `PUT`, `PUT template`, `DELETE`) |
-| **Lot Operational Status (Open, Close, Maintenance)** | âœ— | âœ— | âœ— | **âœ“** | **âœ“** | `LotsController.UpdateStatusAsync` (`PATCH /status`) |
-| **Zone & Slot Configuration Update** | âœ— | âœ— | âœ— | âœ— | **âœ“** | `ZonesController.UpdateAsync`, `SlotsController.UpdateAsync` |
-| **Slot Maintenance Status Update** | âœ— | âœ— | âœ— | **âœ“** | **âœ“** | `SlotsController.UpdateStatusAsync` (`PATCH /status`) |
-| **Admin Employee & Manager Provisioning** | âœ— | âœ— | âœ— | âœ— | **âœ“** | `AdminController` (`managers`, `managers/{id}/lots`, `users/{id}/status`) |
-| **Admin System Revenue Reports** | âœ— | âœ— | âœ— | âœ— | **âœ“** | `AdminRevenueController` (System-wide metrics) |
-| **Admin Parking Simulation Sandbox** | âœ— | âœ— | âœ— | âœ— | **âœ“** | `AdminSimulationController` (System-wide demo control) |
+| **Public Lots & Prices** | **✓** | **✓** | **✓** | **✓** | **✓** | `LotsController.GetPublicLotsAsync`, `GetPublicPricesAsync` |
+| **Public 3D / 2D Layout & Status** | **✓** | **✓** | **✓** | **✓** | **✓** | `LayoutsController` (`/layout`, `/status`, `/2d`, `/lot-templates`) |
+| **User Registration & Login (Password, OTP, Google)** | **✓** | — | — | — | — | `UsersController` (`register`, `authenticate`, `login-otp`, `login-google`) |
+| **2FA Verification & Resend** | **✓** | — | — | — | — | `UsersController` (`two-factor`, `two-factor/resend`) |
+| **Password Reset (Forgot/Reset)** | **✓** | — | — | — | — | `UsersController` (`forgot-password`, `reset-password`) |
+| **Customer Profile & Password Change** | ✗ | **✓** | **✓** | **✓** | **✓** | `UsersController` (`/profile`, `/change-password`, `/check-unique`) |
+| **Customer Avatar Upload** | ✗ | **✓** | **✓** | **✓** | **✓** | `UsersController.UploadAvatarAsync` (`/profile/avatar`) |
+| **Customer Vehicles (CRUD & Default)** | ✗ | **✓** | **✓** | **✓** | **✓** | `UsersController` (`/profile/vehicles`, `/check-plate`, `/default`) |
+| **Vehicle KYC Documents (Upload & Submit)** | ✗ | **✓** | ✗ | ✗ | ✗ | `VehicleDocumentsController` (Owner only) |
+| **Customer Wallet (Balance, Top-Up, Withdraw)** | ✗ | **✓** | ✗ | ✗ | ✗ | `WalletController` (`/api/wallet`, `/topup`, `/withdraw`) |
+| **Customer Slot Reservations (Create, View, Cancel)** | ✗ | **✓** | ✗ | ✗ | ✗ | `ReservationsController` |
+| **Customer Parking Sessions (Current, History, Quote)** | ✗ | **✓** | ✗ | ✗ | ✗ | `ParkingSessionsController` |
+| **Customer Gate Requests (CheckIn, CheckOut, Mine)** | ✗ | **✓** | ✗ | ✗ | ✗ | `GateRequestsController` (`mine`, `check-in-request`, `check-out-request`) |
+| **Customer Notifications (Bell, Mark Read, Delete)** | ✗ | **✓** | ✗ | ✗ | ✗ | `NotificationsController` |
+| **Payment Gateway Callbacks (VNPay/MoMo Return & IPN)** | **✓** | **✓** | **✓** | **✓** | **✓** | `PaymentsController` (`vnpay/return`, `vnpay/ipn`, `momo/return`, `momo/ipn`) |
+| **Payment Status Check & Simulation** | ✗ | **✓** | **✓** | **✓** | **✓** | `PaymentsController` (`{id}`, `{id}/check`, `{id}/simulate-success`) |
+| **Vehicle Verification Queue & Review** | ✗ | ✗ | **✓** | **✓** | **✓** | `VehicleVerificationsController` |
+| **Staff Assigned Lots** | ✗ | ✗ | **✓** | ✗ | ✗ | `StaffController.GetLotsAsync` |
+| **Gate Operations (Check-in, Confirm, Checkout, Quote)** | ✗ | ✗ | **✓** | **✓** | **✓** | `StaffGateController` (Subject to lot-scope) |
+| **Staff Gate Requests Queue (Approve/Refuse)** | ✗ | ✗ | **✓** | **✓** | **✓** | `GateRequestsController` (Subject to lot-scope) |
+| **Manager Assigned Lots & Staff Management** | ✗ | ✗ | ✗ | **✓** | ✗ | `ManagerController` |
+| **Manager Operations (Abnormal Close, Lost Ticket Decision)** | ✗ | ✗ | ✗ | **✓** | **✓** | `ManagerOperationsController` (Subject to lot-scope) |
+| **Manager Whitelist / Blacklist (Add, Remove)** | ✗ | ✗ | ✗ | **✓** | **✓** | `ManagerOperationsController` (Subject to lot-scope) |
+| **Manager Pricing Rules (CRUD & Simulation)** | ✗ | ✗ | ✗ | **✓** | **✓** | `ManagerPricingController` (Subject to lot-scope) |
+| **Manager Revenue Reports** | ✗ | ✗ | ✗ | **✓** | ✗ | `ManagerRevenueController` (Scoped to managed lots) |
+| **Lot Configuration (Create, Update, Template, Delete)** | ✗ | ✗ | ✗ | ✗ | **✓** | `LotsController` (`POST`, `PUT`, `PUT template`, `DELETE`) |
+| **Lot Operational Status (Open, Close, Maintenance)** | ✗ | ✗ | ✗ | **✓** | **✓** | `LotsController.UpdateStatusAsync` (`PATCH /status`) |
+| **Zone & Slot Configuration Update** | ✗ | ✗ | ✗ | ✗ | **✓** | `ZonesController.UpdateAsync`, `SlotsController.UpdateAsync` |
+| **Slot Maintenance Status Update** | ✗ | ✗ | ✗ | **✓** | **✓** | `SlotsController.UpdateStatusAsync` (`PATCH /status`) |
+| **Admin Employee & Manager Provisioning** | ✗ | ✗ | ✗ | ✗ | **✓** | `AdminController` (`managers`, `managers/{id}/lots`, `users/{id}/status`) |
+| **Admin System Revenue Reports** | ✗ | ✗ | ✗ | ✗ | **✓** | `AdminRevenueController` (System-wide metrics) |
+| **Admin Parking Simulation Sandbox** | ✗ | ✗ | ✗ | ✗ | **✓** | `AdminSimulationController` (System-wide demo control) |
 
 ---
 
@@ -763,103 +763,103 @@ All domain status values serialize as exact JSON strings. The tables below docum
 
 #### 1. Reservation & Booking Enums
 
-| Constant Set | Allowed Values | Source Definition | Meaning & Integration Semantics |
+| Constant Set | Allowed Values | Domain Class | Meaning & Integration Semantics |
 |:---|:---|:---|:---|
-| **`ReservationStatus`** | `PendingDeposit` | `ParkingStatuses.cs:18` | Bay held; waiting for customer to pay deposit within 10-minute window (`DepositMinutes = 10`). |
-| | `Confirmed` | `ParkingStatuses.cs:20` | Deposit paid; QR code issued (`rsv.<token>.<sig>`); bay held from `HoldAheadMinutes` before arrival. |
-| | `CheckedIn` | `ParkingStatuses.cs:22` | Vehicle entered the lot using this reservation; bay transitions to `Occupied`. |
-| | `Completed` | `ParkingStatuses.cs:24` | Vehicle departed; deposit deducted from total parking fee; session completed. |
-| | `Cancelled` | `ParkingStatuses.cs:26` | Cancelled by customer >= 30m before arrival (100% deposit refund) or < 30m (0% refund). |
-| | `LotCancelled` | `ParkingStatuses.cs:28` | Cancelled by lot manager due to maintenance/emergency (100% refund, FR-RSV-09). |
-| | `Expired` | `ParkingStatuses.cs:30` | 10-minute deposit deadline expired without payment; bay released immediately. |
-| | `NoShow` | `ParkingStatuses.cs:32` | Driver did not arrive within hold window (15m without deposit / 30m with deposit); deposit forfeited. |
-| **`BookingMode`** | `Scheduled` | `ParkingStatuses.cs:7` | Arrival and departure times both specified; bay reserved for that exact duration (30m to 24h). |
-| | `PayAsYouGo` | `ParkingStatuses.cs:9` | Arrival specified; departure open-ended; parking fee accumulates until vehicle leaves. |
+| **`ReservationStatus`** | `PendingDeposit` | `ParkingStatuses` | Bay held; waiting for customer to pay deposit within 10-minute window (`DepositMinutes = 10`). |
+| | `Confirmed` | `ParkingStatuses` | Deposit paid; QR code issued (`rsv.<token>.<sig>`); bay held from `HoldAheadMinutes` before arrival. |
+| | `CheckedIn` | `ParkingStatuses` | Vehicle entered the lot using this reservation; bay transitions to `Occupied`. |
+| | `Completed` | `ParkingStatuses` | Vehicle departed; deposit deducted from total parking fee; session completed. |
+| | `Cancelled` | `ParkingStatuses` | Cancelled by customer >= 30m before arrival (100% deposit refund) or < 30m (0% refund). |
+| | `LotCancelled` | `ParkingStatuses` | Cancelled by lot manager due to maintenance/emergency (100% refund, FR-RSV-09). |
+| | `Expired` | `ParkingStatuses` | 10-minute deposit deadline expired without payment; bay released immediately. |
+| | `NoShow` | `ParkingStatuses` | Driver did not arrive within hold window (15m without deposit / 30m with deposit); deposit forfeited. |
+| **`BookingMode`** | `Scheduled` | `ParkingStatuses` | Arrival and departure times both specified; bay reserved for that exact duration (30m to 24h). |
+| | `PayAsYouGo` | `ParkingStatuses` | Arrival specified; departure open-ended; parking fee accumulates until vehicle leaves. |
 
 #### 2. Parking Session & Bay Enums
 
-| Constant Set | Allowed Values | Source Definition | Meaning & Integration Semantics |
+| Constant Set | Allowed Values | Domain Class | Meaning & Integration Semantics |
 |:---|:---|:---|:---|
-| **`SessionStatus`** | `PendingEntry` | `ParkingStatuses.cs:45` | Barrier opened at entry lane; waiting for ground loop sensor confirmation (timeout 2 min). |
-| | `Active` | `ParkingStatuses.cs:47` | Vehicle entered lot and confirmed by sensor; actively parked and accumulating fees. |
-| | `LostTicketPending` | `ParkingStatuses.cs:49` | Lost ticket reported at exit lane; awaiting conditional or manager approval. |
-| | `PendingPayment` | `ParkingStatuses.cs:51` | Fee requested at exit lane, kiosk, or app; waiting for cash or gateway confirmation. |
-| | `Paid` | `ParkingStatuses.cs:53` | Total parking fee paid (or 0 VND); 15-minute Exit Window activated. |
-| | `Completed` | `ParkingStatuses.cs:55` | Vehicle crossed exit barrier; session closed; bay freed. |
-| | `AbnormalClosed` | `ParkingStatuses.cs:57` | Ghost session closed manually by Manager (fee waived/cleared, FR-OPS-12). |
-| | `EmergencyExit` | `ParkingStatuses.cs:59` | Emergency barrier override opened exit without fee collection. |
-| | `Cancelled` | `ParkingStatuses.cs:61` | Vehicle turned around before ground loop sensor; session invalidated with zero charge. |
-| **`SessionType`** | `WalkIn` | `ParkingStatuses.cs:90` | Transient visitor entry without advance booking; paper QR ticket issued. |
-| | `Reservation` | `ParkingStatuses.cs:91` | Entry matched to a confirmed advance slot reservation. |
-| | `Whitelist` | `ParkingStatuses.cs:92` | Registered VIP/staff plate with automatic 0 VND entry and exit. |
-| **`SlotStatus`** | `Available` | `ParkingStatuses.cs:73` | Bay is empty, active, and available for booking or walk-in parking. |
-| | `Reserved` | `ParkingStatuses.cs:74` | Bay held for an upcoming confirmed reservation (locked 2h before arrival). |
-| | `Occupied` | `ParkingStatuses.cs:75` | Vehicle is physically parked in the bay. |
-| | `Maintenance` | `ParkingStatuses.cs:76` | Bay taken out of service by Manager or Admin for repairs/maintenance. |
-| **`LotStatus`** | `Active` | `ParkingStatuses.cs:82` | Facility fully operational; accept bookings and gate traffic. |
-| | `Maintenance` | `ParkingStatuses.cs:83` | Entire facility under maintenance; reservations blocked. |
-| | `TemporarilyClosed` | `ParkingStatuses.cs:84` | Facility temporarily closed (e.g. overnight or holiday); gates locked. |
-| | `Inactive` | `ParkingStatuses.cs:85` | Facility decommissioned. |
+| **`SessionStatus`** | `PendingEntry` | `ParkingStatuses` | Barrier opened at entry lane; waiting for ground loop sensor confirmation (timeout 2 min). |
+| | `Active` | `ParkingStatuses` | Vehicle entered lot and confirmed by sensor; actively parked and accumulating fees. |
+| | `LostTicketPending` | `ParkingStatuses` | Lost ticket reported at exit lane; awaiting conditional or manager approval. |
+| | `PendingPayment` | `ParkingStatuses` | Fee requested at exit lane, kiosk, or app; waiting for cash or gateway confirmation. |
+| | `Paid` | `ParkingStatuses` | Total parking fee paid (or 0 VND); 15-minute Exit Window activated. |
+| | `Completed` | `ParkingStatuses` | Vehicle crossed exit barrier; session closed; bay freed. |
+| | `AbnormalClosed` | `ParkingStatuses` | Ghost session closed manually by Manager (fee waived/cleared, FR-OPS-12). |
+| | `EmergencyExit` | `ParkingStatuses` | Emergency barrier override opened exit without fee collection. |
+| | `Cancelled` | `ParkingStatuses` | Vehicle turned around before ground loop sensor; session invalidated with zero charge. |
+| **`SessionType`** | `WalkIn` | `ParkingStatuses` | Transient visitor entry without advance booking; paper QR ticket issued. |
+| | `Reservation` | `ParkingStatuses` | Entry matched to a confirmed advance slot reservation. |
+| | `Whitelist` | `ParkingStatuses` | Registered VIP/staff plate with automatic 0 VND entry and exit. |
+| **`SlotStatus`** | `Available` | `ParkingStatuses` | Bay is empty, active, and available for booking or walk-in parking. |
+| | `Reserved` | `ParkingStatuses` | Bay held for an upcoming confirmed reservation (locked 2h before arrival). |
+| | `Occupied` | `ParkingStatuses` | Vehicle is physically parked in the bay. |
+| | `Maintenance` | `ParkingStatuses` | Bay taken out of service by Manager or Admin for repairs/maintenance. |
+| **`LotStatus`** | `Active` | `ParkingStatuses` | Facility fully operational; accept bookings and gate traffic. |
+| | `Maintenance` | `ParkingStatuses` | Entire facility under maintenance; reservations blocked. |
+| | `TemporarilyClosed` | `ParkingStatuses` | Facility temporarily closed (e.g. overnight or holiday); gates locked. |
+| | `Inactive` | `ParkingStatuses` | Facility decommissioned. |
 
 #### 3. Pricing & Tariff Enums
 
-| Constant Set | Allowed Values | Source Definition | Meaning & Integration Semantics |
+| Constant Set | Allowed Values | Domain Class | Meaning & Integration Semantics |
 |:---|:---|:---|:---|
-| **`ChargeModel`** | `Block` | `PricingRuleModels.cs:29` | Fixed block-rate pricing (e.g., 20,000 VND per 60-minute block). |
-| | `Hourly` | `FeeCalculator.cs:9` | Equivalent to Block model with `BlockMinutes = 60`. |
-| | `PerEntry` | `FeeCalculator.cs:9` | Flat single entry charge assessed once per calendar day. |
-| | `DayNight` | `FeeCalculator.cs:9` | Differentiated rates based on whether block starts in Day or Night window. |
-| **`PricingRuleStatus`**| `Draft` | `PricingRuleModels.cs:72` | Initial configuration; inactive and editable; can be simulated. |
-| | `Active` | `PricingRuleModels.cs:72` | Currently enforced pricing rule for the lot and vehicle type. |
-| | `Inactive` | `PricingRuleModels.cs:72` | Superseded by a newer active rule; retained for audit history. |
-| | `Archived` | `PricingRuleModels.cs:72` | Soft-deleted / retired rule. |
+| **`ChargeModel`** | `Block` | `PricingRuleModels` | Fixed block-rate pricing (e.g., 20,000 VND per 60-minute block). |
+| | `Hourly` | `FeeCalculator` | Equivalent to Block model with `BlockMinutes = 60`. |
+| | `PerEntry` | `FeeCalculator` | Flat single entry charge assessed once per calendar day. |
+| | `DayNight` | `FeeCalculator` | Differentiated rates based on whether block starts in Day or Night window. |
+| **`PricingRuleStatus`**| `Draft` | `PricingRuleModels` | Initial configuration; inactive and editable; can be simulated. |
+| | `Active` | `PricingRuleModels` | Currently enforced pricing rule for the lot and vehicle type. |
+| | `Inactive` | `PricingRuleModels` | Superseded by a newer active rule; retained for audit history. |
+| | `Archived` | `PricingRuleModels` | Soft-deleted / retired rule. |
 
 #### 4. Gate Requests & Hardware Enums
 
-| Constant Set | Allowed Values | Source Definition | Meaning & Integration Semantics |
+| Constant Set | Allowed Values | Domain Class | Meaning & Integration Semantics |
 |:---|:---|:---|:---|
-| **`GateRequestKind`** | `CheckIn` | `GateRequestModels.cs:7` | Customer requests entry barrier open for confirmed reservation. |
-| | `CheckOut` | `GateRequestModels.cs:9` | Customer requests exit barrier open for active/prepaid session. |
-| **`GateRequestStatus`**| `Waiting` | `GateRequestModels.cs:17`| Queued for Staff action at gate terminal lane. |
-| | `Completed` | `GateRequestModels.cs:19`| Barrier opened; gate operation completed. |
-| | `Refused` | `GateRequestModels.cs:21`| Staff refused request (reason supplied in `Note`). |
-| | `Cancelled` | `GateRequestModels.cs:23`| Withdrawn by customer or invalidated by upstream session state. |
-| **`PlateListType`** | `Whitelist` | `ParkingStatuses.cs:140`| Free entry/exit authorized plates (staff, VIP, municipal). |
-| | `Blacklist` | `ParkingStatuses.cs:141`| Stolen/flagged vehicles; gate blocks entry and triggers alert. |
-| **`ViolationType`** | `LostTicket` | `ParkingStatuses.cs:148`| Driver cannot present valid entry ticket or QR code. |
-| | `Abandoned` | `ParkingStatuses.cs:150`| Vehicle parked continuously past abandoned threshold (7 days). |
-| **`LostTicketCaseStatus`** | `Pending` | `ParkingStatuses.cs:160`| Awaiting review. |
-| | `Approved` | `ParkingStatuses.cs:162`| Fine and parking fee cleared for payment. |
-| | `Rejected` | `ParkingStatuses.cs:164`| Case rejected; vehicle remains detained. |
+| **`GateRequestKind`** | `CheckIn` | `GateRequestModels` | Customer requests entry barrier open for confirmed reservation. |
+| | `CheckOut` | `GateRequestModels` | Customer requests exit barrier open for active/prepaid session. |
+| **`GateRequestStatus`**| `Waiting` | `GateRequestModels`| Queued for Staff action at gate terminal lane. |
+| | `Completed` | `GateRequestModels`| Barrier opened; gate operation completed. |
+| | `Refused` | `GateRequestModels`| Staff refused request (reason supplied in `Note`). |
+| | `Cancelled` | `GateRequestModels`| Withdrawn by customer or invalidated by upstream session state. |
+| **`PlateListType`** | `Whitelist` | `ParkingStatuses`| Free entry/exit authorized plates (staff, VIP, municipal). |
+| | `Blacklist` | `ParkingStatuses`| Stolen/flagged vehicles; gate blocks entry and triggers alert. |
+| **`ViolationType`** | `LostTicket` | `ParkingStatuses`| Driver cannot present valid entry ticket or QR code. |
+| | `Abandoned` | `ParkingStatuses`| Vehicle parked continuously past abandoned threshold (7 days). |
+| **`LostTicketCaseStatus`** | `Pending` | `ParkingStatuses`| Awaiting review. |
+| | `Approved` | `ParkingStatuses`| Fine and parking fee cleared for payment. |
+| | `Rejected` | `ParkingStatuses`| Case rejected; vehicle remains detained. |
 
 #### 5. Payments & KYC Verification Enums
 
-| Constant Set | Allowed Values | Source Definition | Meaning & Integration Semantics |
+| Constant Set | Allowed Values | Domain Class | Meaning & Integration Semantics |
 |:---|:---|:---|:---|
-| **`PaymentStatus`** | `Pending` | `ParkingStatuses.cs:97` | Gateway payment link generated; waiting for customer checkout. |
-| | `Succeeded` | `ParkingStatuses.cs:98` | Payment verified via cryptographic callback or IPN. |
-| | `Failed` | `ParkingStatuses.cs:99` | Payment rejected or abandoned at gateway. |
-| | `Expired` | `ParkingStatuses.cs:100`| Payment link expired (15-minute link validity). |
-| | `RefundPending` | `ParkingStatuses.cs:102`| Refund initiated; awaiting gateway settlement. |
-| | `Refunded` | `ParkingStatuses.cs:103`| Deposit or fee successfully returned to customer. |
-| **`PaymentPurpose`**| `Deposit` | `ParkingStatuses.cs:108`| Reservation deposit hold. |
-| | `ParkingFee` | `ParkingStatuses.cs:109`| Settling active parking stay. |
-| | `Refund` | `ParkingStatuses.cs:110`| Return of overpaid deposit or cancelled reservation. |
-| | `WalletTopUp` | `ParkingStatuses.cs:111`| Crediting XXIV customer wallet. |
-| **`PaymentMethod`** | `Cash` | `ParkingStatuses.cs:116`| Cash paid at lane or staff counter. |
-| | `Online` | `ParkingStatuses.cs:117`| Third-party gateway payment (VNPay / MoMo). |
-| | `Wallet` | `ParkingStatuses.cs:118`| XXIV internal stored-value customer wallet. |
-| **`PaymentChannel`**| `App` | `ParkingStatuses.cs:124`| Initiated in customer mobile app (activates Exit Window). |
-| | `Kiosk` | `ParkingStatuses.cs:126`| Paid at counter or standalone payment machine (activates Exit Window). |
-| | `Lane` | `ParkingStatuses.cs:128`| Paid directly at exit barrier lane (barrier opens immediately; no Exit Window). |
-| **`VehicleVerificationStatus`** | `Draft` | `VehicleDocumentModels.cs:41` | Files uploaded; not yet submitted for review. |
-| | `NeedsReview` | `VehicleDocumentModels.cs:49` | Queued in staff verification terminal for manual eye check. |
-| | `Approved` | `VehicleDocumentModels.cs:50` | Vehicle verified; plate authorized for booking and ANPR recognition. |
-| | `Rejected` | `VehicleDocumentModels.cs:51` | Rejected by staff; customer notified with reason; vehicle delisted. |
+| **`PaymentStatus`** | `Pending` | `ParkingStatuses` | Gateway payment link generated; waiting for customer checkout. |
+| | `Succeeded` | `ParkingStatuses` | Payment verified via cryptographic callback or IPN. |
+| | `Failed` | `ParkingStatuses` | Payment rejected or abandoned at gateway. |
+| | `Expired` | `ParkingStatuses`| Payment link expired (15-minute link validity). |
+| | `RefundPending` | `ParkingStatuses`| Refund initiated; awaiting gateway settlement. |
+| | `Refunded` | `ParkingStatuses`| Deposit or fee successfully returned to customer. |
+| **`PaymentPurpose`**| `Deposit` | `ParkingStatuses`| Reservation deposit hold. |
+| | `ParkingFee` | `ParkingStatuses`| Settling active parking stay. |
+| | `Refund` | `ParkingStatuses`| Return of overpaid deposit or cancelled reservation. |
+| | `WalletTopUp` | `ParkingStatuses`| Crediting XXIV customer wallet. |
+| **`PaymentMethod`** | `Cash` | `ParkingStatuses`| Cash paid at lane or staff counter. |
+| | `Online` | `ParkingStatuses`| Third-party gateway payment (VNPay / MoMo). |
+| | `Wallet` | `ParkingStatuses`| XXIV internal stored-value customer wallet. |
+| **`PaymentChannel`**| `App` | `ParkingStatuses`| Initiated in customer mobile app (activates Exit Window). |
+| | `Kiosk` | `ParkingStatuses`| Paid at counter or standalone payment machine (activates Exit Window). |
+| | `Lane` | `ParkingStatuses`| Paid directly at exit barrier lane (barrier opens immediately; no Exit Window). |
+| **`VehicleVerificationStatus`** | `Draft` | `VehicleDocumentModels` | Files uploaded; not yet submitted for review. |
+| | `NeedsReview` | `VehicleDocumentModels` | Queued in staff verification terminal for manual eye check. |
+| | `Approved` | `VehicleDocumentModels` | Vehicle verified; plate authorized for booking and ANPR recognition. |
+| | `Rejected` | `VehicleDocumentModels` | Rejected by staff; customer notified with reason; vehicle delisted. |
 | | *Legacy OCR* | `Pending`, `Processing`, `AutoVerified` | Deprecated automated OCR states preserved for historical records. |
-| **`VehicleDocumentKinds`** | `RegistrationCertificate` | `VehicleDocumentModels.cs:11` | Vehicle registration paper (cÃ  váº¹t xe). |
-| | `CitizenId` | `VehicleDocumentModels.cs:13` | Owner Citizen Identity Card (CCCD). |
-| | `Front` / `Back` | `VehicleDocumentModels.cs:14-15` | Document side (system requires `Front` for both papers). |
+| **`VehicleDocumentKinds`** | `RegistrationCertificate` | `VehicleDocumentModels` | Vehicle registration paper (cà vẹt xe). |
+| | `CitizenId` | `VehicleDocumentModels` | Owner Citizen Identity Card (CCCD). |
+| | `Front` / `Back` | `VehicleDocumentModels` | Document side (system requires `Front` for both papers). |
 
 ---
 
@@ -1051,12 +1051,12 @@ $$\text{DepositRefund} = \text{Deposit} - \text{DepositUsed}$$
   - Reservation Deposit Paid: `30,000 VND`
 
 **Step-by-Step Calculation:**
-1. **Day 1 (Oct 30, 20:00 to 24:00 â€” 4 hours / 240 mins):**
+1. **Day 1 (Oct 30, 20:00 to 24:00 — 4 hours / 240 mins):**
    - Block 1 (First Block): 60 mins $\rightarrow$ `15,000 VND`
    - Remaining time: 180 mins $\rightarrow$ $\lceil 180 / 60 \rceil = 3$ blocks
-   - Blocks 2â€“4: $3 \times 20,000 = 60,000\text{ VND}$
+   - Blocks 2–4: $3 \times 20,000 = 60,000\text{ VND}$
    - Day 1 Total: $15,000 + 60,000 = 75,000\text{ VND}$. (Below daily cap of 150,000; not capped).
-2. **Day 2 (Oct 31, 00:00 to 10:30 â€” 10.5 hours / 630 mins):**
+2. **Day 2 (Oct 31, 00:00 to 10:30 — 10.5 hours / 630 mins):**
    - First block rule applies only to the first day of the stay.
    - Total blocks: $\lceil 630 / 60 \rceil = 11$ blocks.
    - Uncapped fee: $11 \times 20,000 = 220,000\text{ VND}$.
@@ -1082,23 +1082,23 @@ $$\text{DepositRefund} = \text{Deposit} - \text{DepositUsed}$$
   - `MaxDailyFee`: null (no cap)
 - **Session Timestamps:**
   - Entry: `2026-10-30T09:30:00Z` (Local: `16:30:00`, Oct 30, 2026)
-  - Departure: `2026-10-30T13:45:00Z` (Local: `20:15:00`, Oct 30, 2026)
+  - Prepayment / Quote: `2026-10-30T13:15:00Z` (Local: `20:15:00`, Oct 30, 2026)
   - Total Duration: 3 hours 45 mins (225 minutes)
   - Walk-in Guest (No advance reservation; Deposit = `0 VND`)
 
 **Step-by-Step Calculation:**
 1. **Block Breakdown:**
-   - Block 1 (16:30â€“17:30): Starts at 16:30 (Day) $\rightarrow$ `20,000 VND`
-   - Block 2 (17:30â€“18:30): Starts at 17:30 (Day) $\rightarrow$ `20,000 VND`
-   - Block 3 (18:30â€“19:30): Starts at 18:30 (Night) $\rightarrow$ `30,000 VND`
-   - Block 4 (19:30â€“20:30): Starts at 19:30 (Night) $\rightarrow$ `30,000 VND`
+   - Block 1 (16:30–17:30): Starts at 16:30 (Day) $\rightarrow$ `20,000 VND`
+   - Block 2 (17:30–18:30): Starts at 17:30 (Day) $\rightarrow$ `20,000 VND`
+   - Block 3 (18:30–19:30): Starts at 18:30 (Night) $\rightarrow$ `30,000 VND`
+   - Block 4 (19:30–20:30): Starts at 19:30 (Night) $\rightarrow$ `30,000 VND`
    - Total Gross Fee: $20,000 + 20,000 + 30,000 + 30,000 = \mathbf{100,000\text{ VND}}$
 2. **In-App Prepayment & Exit Window Activation:**
-   - At 20:15 local time, driver quotes and prepays `100,000 VND` via App with XXIV Wallet.
+   - At 20:15 local time (13:15:00Z), driver quotes and prepays `100,000 VND` via App with XXIV Wallet.
    - Session status changes to `Paid`.
-   - Exit Window granted: **15 minutes** (`ValidUntil = 20:30:00`).
+   - Exit Window granted: **15 minutes** (`ValidUntil = 20:30:00` local / `13:30:00Z`).
 3. **Exit Barrier Late Departure (Missed Exit Window):**
-   - Vehicle encounters traffic inside the lot and reaches the exit barrier at `20:42:00` (12 minutes after the Exit Window expired).
+   - Vehicle encounters traffic inside the lot and reaches the exit barrier at `20:42:00` local (`13:42:00Z`, 12 minutes after the Exit Window expired).
    - Gate system detects `ExitWindowMissed = true`.
    - Assessment: `ExitWindowLateFee = 10,000 VND` (BR-10).
 4. **Final Barrier Settlement:**
@@ -1515,7 +1515,7 @@ Active parking telemetry card returned by `GET /api/parking-sessions/current`. W
 | `pendingPayment`| `PaymentResponseModel` | Yes | Open gateway payment transaction, if any. | `null` |
 | `exitPass` | `ExitPassModel` | Yes | Signed exit QR token (available from check-in). | *(Nested object)* |
 
-```json
+```jsonc
 {
   "session": {
     "id": 9001,
@@ -1712,7 +1712,7 @@ Representation of a financial transaction.
 | `paidAt` | `string` (ISO 8601 UTC) | Yes | Gateway settlement timestamp. | `"2026-10-30T07:37:12Z"` |
 | `expiresAt` | `string` (ISO 8601 UTC) | Yes | Payment link expiration (15 mins). | `"2026-10-30T07:50:00Z"` |
 
-```json
+```jsonc
 {
   "id": 7001,
   "code": "PM-20261030-001",
@@ -1764,7 +1764,7 @@ Customer XXIV Stored-Value Wallet balance telemetry.
 ```
 
 
-## 8. API Reference â€” Modules 01 to 04
+## 8. API Reference
 
 ---
 
@@ -1974,7 +1974,7 @@ Customer XXIV Stored-Value Wallet balance telemetry.
 }
 ```
 - **Response Schema:** `ApiResult<LoginResponseModel>`
-```json
+```jsonc
 {
   "succeeded": true,
   "result": {
@@ -2008,14 +2008,14 @@ Customer XXIV Stored-Value Wallet balance telemetry.
 | `twoFactorToken`| `string` | Yes* | 5-minute challenge token issued by `/authenticate` (*or `email`). | `"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."` |
 | `code` | `string` | Yes | 6-digit numeric verification code. | `"123456"` |
 
-```json
+```jsonc
 {
   "twoFactorToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
   "code": "123456"
 }
 ```
 - **Response Schema:** `ApiResult<LoginResponseModel>`
-```json
+```jsonc
 {
   "succeeded": true,
   "result": {
@@ -2048,13 +2048,13 @@ Customer XXIV Stored-Value Wallet balance telemetry.
 | `twoFactorToken`| `string` | No | Previous active challenge token. | `"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."` |
 | `email` | `string` | No | Registered account email. | `"customer@xxivparking.vn"` |
 
-```json
+```jsonc
 {
   "twoFactorToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
 }
 ```
 - **Response Schema:** `ApiResult<ResendTwoFactorResponseModel>`
-```json
+```jsonc
 {
   "succeeded": true,
   "result": {
@@ -2118,7 +2118,7 @@ Customer XXIV Stored-Value Wallet balance telemetry.
 }
 ```
 - **Response Schema:** `ApiResult<LoginResponseModel>`
-```json
+```jsonc
 {
   "succeeded": true,
   "result": {
@@ -2164,7 +2164,7 @@ Customer XXIV Stored-Value Wallet balance telemetry.
 - **Authorization:** `[AllowAnonymous]`.
 - **Rate Limit:** Policy `password-reset` (5 req / 15 min per IP).
 - **Request Body:** `ResetPasswordModel` (`email: string`, `token: string`, `newPassword: string`)
-```json
+```jsonc
 {
   "email": "customer@xxivparking.vn",
   "token": "CfDJ8N7sV9...",
@@ -2188,13 +2188,13 @@ Customer XXIV Stored-Value Wallet balance telemetry.
 - **Summary:** Authenticates or auto-provisions a customer account via Google OAuth ID token.
 - **Authorization:** `[AllowAnonymous]`.
 - **Request Body:** `GoogleLoginModel` (`idToken: string`)
-```json
+```jsonc
 {
   "idToken": "eyJhbGciOiJSUzI1NiIsImtpZCI6Ij..."
 }
 ```
 - **Response Schema:** `ApiResult<LoginResponseModel>`
-```json
+```jsonc
 {
   "succeeded": true,
   "result": {
@@ -2438,7 +2438,7 @@ Customer XXIV Stored-Value Wallet balance telemetry.
 
 ---
 
-### 8.2 Module 02: Parking Lots, Layouts, Zones & Slots (23 Endpoints + Aliases)
+### 8.2 Module 02: Parking Lots, Layouts, Zones & Slots (22 Endpoints + Aliases)
 
 #### 8.2.1 `GET /api/lots` (Alias: `/api/parking-lots`)
 - **Summary:** Lists parking lots for management dashboards with status and search filters.
@@ -2766,7 +2766,7 @@ Customer XXIV Stored-Value Wallet balance telemetry.
 - **Summary:** Updates operational status of a bay (taking in or out of maintenance).
 - **Authorization:** `[Authorize(Roles = "Admin,Manager")]`.
 - **Path Parameters:** `id` (`integer`, required).
-- **Request Body:** `UpdateSlotStatusModel` (`status: string` â€” `"Available"` or `"Maintenance"`).
+- **Request Body:** `UpdateSlotStatusModel` (`status: string` — `"Available"` or `"Maintenance"`).
 ```json
 {
   "status": "Maintenance"
@@ -2870,7 +2870,7 @@ Customer XXIV Stored-Value Wallet balance telemetry.
 - **Authorization:** `[Authorize(Roles = "User")]`.
 - **Path Parameters:** `id` (`integer` int64, required).
 - **Response Schema:** `ApiResult<ReservationQrModel>`
-```json
+```jsonc
 {
   "succeeded": true,
   "result": {
@@ -2994,7 +2994,7 @@ Customer XXIV Stored-Value Wallet balance telemetry.
 - **Authorization:** `[Authorize(Roles = "User")]`. Ownership checked.
 - **Path Parameters:** `id` (`integer` int64, required).
 - **Response Schema:** `ApiResult<ExitPassModel>`
-```json
+```jsonc
 {
   "succeeded": true,
   "result": {
@@ -3058,10 +3058,6 @@ Customer XXIV Stored-Value Wallet balance telemetry.
 - **Response Schema:** `ApiResult<PaymentResponseModel>` (See Section 7.7)
 - **Side Effects:** Session status transitions to `Paid`; Exit Window activated.
 
-
-## 8. API Reference â€” Modules 05 to 08
-
----
 
 ### 8.5 Module 05: Staff Gate Operations & Gate Requests (27 Endpoints)
 
@@ -4076,10 +4072,6 @@ Customer XXIV Stored-Value Wallet balance telemetry.
   - `400 Bad Request`: Amount exceeds available balance or pending hold encumbrance.
 
 
-## 8. API Reference â€” Modules 09 to 12
-
----
-
 ### 8.9 Module 09: Revenue Reporting (2 Endpoints)
 
 #### 8.9.1 `GET /api/manager/reports/revenue`
@@ -4525,7 +4517,7 @@ Public real-time broadcast channel powering the customer 3D parking lot model (S
 | **`LayoutChanged`** | `lot-{lotId}` | `{ lotId: int }` | Emitted when an Admin applies a new 3D building template (`PUT /api/lots/{id}/template`). |
 | **`ZoneCounterChanged`**| `lot-{lotId}` | `{ lotId: int, zoneId: int, availableSpaces: int, occupiedSpaces: int, totalCapacity: int }` | Emitted upon check-in confirmation and checkout barrier departure. |
 
-```json
+```jsonc
 // Example: SlotStatusChanged
 {
   "lotId": 1,
@@ -4576,7 +4568,7 @@ Authenticated operational channel serving both Customer personal telemetry and S
 | **`GateRequestChanged`**| Customer (`userId`) + Ops Group (`ops-lot-{lotId}`) | `{ lotId: int, requestId: long, kind: string, status: string }` | Emitted when customer creates, cancels, or staff approves/refuses a gate request. |
 | **`NotificationCreated`**| Customer (`userId`) | `{ notification: NotificationModel, unreadCount: int }` | Pushed by `SignalRUserNotificationNotifier` upon vehicle approval, check-in, or checkout. |
 
-```json
+```jsonc
 // Example: PaymentChanged
 {
   "paymentId": 7001,
@@ -4630,7 +4622,7 @@ public override async Task OnConnectedAsync()
 |:---|:---|:---|:---|
 | **`VerificationChanged`** | Customer (`userId`) + Reviewers Group | `{ verificationId: Guid, vehicleId: Guid, status: string }` | Emitted when customer submits papers (`NeedsReview`) or Staff decides (`Approved` / `Rejected`). |
 
-```json
+```jsonc
 // Example: VerificationChanged
 {
   "verificationId": "v1e2r3i4-0001-4000-8000-000000000001",
@@ -4937,7 +4929,7 @@ $$\text{token} = \text{kind}.\text{payload}.\text{signature}$$
 
 | Term | Domain Definition & System Semantics |
 |:---|:---|
-| **Exit Window** | A **15-minute** grace duration (ExitWindowMinutes = 15) granted immediately after a customer prepays their parking stay via mobile app or kiosk. If the vehicle transits the exit barrier within this window, the barrier opens with   VND due. |
+| **Exit Window** | A **15-minute** grace duration (ExitWindowMinutes = 15) granted immediately after a customer prepays their parking stay via mobile app or kiosk. If the vehicle transits the exit barrier within this window, the barrier opens with 0 VND due. |
 | **Exit Window Late Fee** | A flat penalty surcharge of **10,000 VND** (ExitWindowLateFee = 10000) assessed per BR-10 if a vehicle reaches the exit barrier after its Exit Window has expired. |
 | **Grace Period** | A schema property (GraceMinutes) representing free stay duration. Under current team business policy (BR-09 / BR-22 amendment), **there is no free period**. The first block is owed immediately upon entry. |
 | **Facility Scope (Lot Scope)** | An authorization boundary enforced by LotScopeService: Admins operate on all facilities; Managers operate only on facilities where ParkingLots.ManagerUserId == userId; Staff operate only on their assigned lot (Employees.ParkingLotId == lotId). Unauthorized access returns HTTP 403 Forbidden. |
@@ -4952,7 +4944,8 @@ $$\text{token} = \text{kind}.\text{payload}.\text{signature}$$
 | **2FA Challenge Token** | A short-lived (5-minute) signed JWT issued by /api/Users/authenticate containing claim purpose: "2FA_Challenge". It cannot be used to call API endpoints; it is exchanged for a 7-day token via /api/Users/two-factor. |
 | **Dynamic QR** | A one-time payment QR code generated at the exit lane (POST /payments/online) with a **60-second** callback deadline (PendingPaymentCallbackSeconds = 60) before Staff may switch to cash. |
 | **Plate Lists (Whitelist / Blacklist)** | Facility-specific vehicle registries: Whitelist allows free 0 VND entry/exit; Blacklist triggers instant alerts and blocks barrier entry. |
-| **Self-Contained Signed Token** | Base64url-encoded tokens (sv, 	kt, exit) signed with HMAC-SHA256 using facility-derived keys, allowing offline cryptographic validation at edge barrier gates (NFR-16). |
+| **Self-Contained Signed Token** | Base64url-encoded tokens (
+sv, 	kt, exit) signed with HMAC-SHA256 using facility-derived keys, allowing offline cryptographic validation at edge barrier gates (NFR-16). |
 
 ---
 

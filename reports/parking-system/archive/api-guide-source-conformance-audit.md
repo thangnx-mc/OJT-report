@@ -1,3 +1,5 @@
+> **SUPERSEDED by API_DOCUMENTATION.md (rebuilt 2026-10-30)**
+
 # Báo cáo Kiểm toán Đối chiếu Mã nguồn: Tài liệu Đặc tả API Hệ thống Quản lý Bãi đỗ xe (Final Audit)
 
 > **Tài liệu được kiểm toán:** `reports/parking-system/API_DOCUMENTATION.md`  

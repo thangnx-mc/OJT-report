@@ -1,3 +1,5 @@
+> **SUPERSEDED by API_DOCUMENTATION.md (rebuilt 2026-10-30)**
+
 # Final Quality Review Report: Parking Management System API Documentation
 
 > **Target Document:** `reports/parking-system/API_DOCUMENTATION.md`  

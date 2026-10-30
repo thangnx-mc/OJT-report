@@ -1,8 +1,8 @@
 # Parking Management System (PMS) Backend API Scan Notes
 
-**Repository:** `c:\DEV\OJT-FSA-Team3\parking-management-system`  
+**Repository:** `PMS solution workspace (parking-management-system)`  
 **Target Solution:** `PMS.sln` (.NET 9 / ASP.NET Core Web API, EF Core 9, PostgreSQL/SQL Server, Hangfire, SignalR)  
-**Deliverable Directory:** `C:\DEV\OJT-report\reports\parking-system`  
+**Deliverable Directory:** `reports/parking-system`  
 **Last Updated:** 2026-10-30  
 **Status:** Complete - All Deliverables Verified and Generated  
 
